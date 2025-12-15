@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>账单神探</title>
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/zh.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .chart-container {
+            height: 400px;
+            width: 100%;
+        }
+
+        .fade-enter-active,
+        .fade-leave-active {
+            transition: opacity 0.3s ease;
+        }
+
+        .fade-enter-from,
+        .fade-leave-to {
+            opacity: 0;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 min-h-screen text-gray-800">
+    <div id="app" class="pb-10">
+        <!-- Header -->
+        <header
+            class="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-40 border-b border-gray-200 transition-all duration-300">
+            <div class="container mx-auto px-6 py-3 flex justify-between items-center">
+                <div class="flex items-center gap-4">
+                    <img src="/static/img/logo.png" alt="Logo" class="h-10 w-auto object-contain"
+                        onerror="this.style.display='none'">
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900 tracking-tight">账单神探</h1>
+                        <p class="text-xs text-gray-500">微信支付智能分析系统</p>
+                    </div>
+                </div>
+                <nav class="flex bg-gray-100/50 p-1 rounded-lg">
+                    <button @click="currentTab = 'upload'"
+                        :class="['px-5 py-2 rounded-md text-sm font-medium transition-all duration-200', currentTab === 'upload' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50']">
+                        嫌疑人管理
+                    </button>
+                    <button @click="currentTab = 'dashboard'"
+                        :class="['px-5 py-2 rounded-md text-sm font-medium transition-all duration-200', currentTab === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50']">
+                        仪表盘
+                    </button>
+                    <button @click="currentTab = 'transactions'"
+                        :class="['px-5 py-2 rounded-md text-sm font-medium transition-all duration-200', currentTab === 'transactions' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50']">
+                        交易明细
+                    </button>
+                </nav>
+            </div>
+        </header>
+
+        <div class="container mx-auto px-6 py-8">
+            <!-- Upload Section -->
+            <div v-if="currentTab === 'upload'" class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+                <div class="flex justify-between items-center mb-8">
+                    <h2 class="text-2xl font-bold text-gray-800">嫌疑人档案</h2>
+                    <div class="flex gap-4">
+                        <div class="relative">
+                            <input type="text" v-model="suspectSearch" @input="loadSuspects" placeholder="搜索嫌疑人..."
+                                class="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all w-64">
+                            <svg class="w-5 h-5 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                            </svg>
+                        </div>
+                        <button @click="openSuspectModal('create')"
+                            class="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 4v16m8-8H4"></path>
+                            </svg>
+                            新建嫌疑人
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Suspect Cards Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div v-for="suspect in suspects" :key="suspect.id"
+                        class="bg-white border border-gray-100 rounded-lg p-4 shadow-sm hover:shadow-md transition-all duration-300 group relative overflow-hidden">
+                        <div class="flex items-center justify-between mb-3 relative z-10">
+                            <div class="flex items-center gap-3">
+                                <div
+                                    class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-lg shadow-inner">
+                                    {{ suspect.name.charAt(0) }}
+                                </div>
+                                <div>
+                                    <h3 class="text-base font-bold text-gray-900">{{ suspect.name }}</h3>
+                                    <span class="text-xs text-gray-500">ID: {{ suspect.id }} | {{ suspect.file_count }}
+                                        份账单</span>
+                                </div>
+                            </div>
+                            <button @click="openManageModal(suspect)"
+                                class="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-100 rounded-full transition-colors"
+                                title="管理">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
+                                    </path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div class="flex gap-2 relative z-10">
+                            <button @click="promptVerify(suspect)"
+                                :class="['flex-1 py-2 rounded-md text-xs font-medium transition-all duration-200 shadow-sm', activeSuspect && activeSuspect.id === suspect.id ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700']">
+                                {{ activeSuspect && activeSuspect.id === suspect.id ? '当前分析中' : '查看分析' }}
+                            </button>
+                            <button @click="openSuspectModal('append', suspect)"
+                                class="flex-1 bg-white border border-gray-300 text-gray-700 py-2 rounded-md text-xs font-medium hover:bg-gray-50 transition-all">
+                                追加账单
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="suspects.length === 0"
+                    class="text-center text-gray-500 py-16 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200 mt-6">
+                    <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor"
+                        viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
+                        </path>
+                    </svg>
+                    <p class="text-lg">暂无嫌疑人数据</p>
+                    <p class="text-sm text-gray-400 mt-1">请点击右上角按钮新建嫌疑人并上传账单</p>
+                </div>
+
+                <!-- Custom Modal -->
+                <transition name="fade">
+                    <div v-if="showSuspectModal"
+                        class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div
+                            class="bg-white rounded-2xl shadow-2xl w-full max-w-lg transform transition-all scale-100 p-0 overflow-hidden">
+                            <div
+                                class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                                <h3 class="text-lg font-bold text-gray-800">{{ modalMode === 'create' ? '新建嫌疑人档案' :
+                                    '追加账单 - ' + modalSuspectName }}</h3>
+                                <button @click="closeSuspectModal"
+                                    class="text-gray-400 hover:text-gray-600 transition-colors">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div class="p-6">
+                                <div v-if="modalMode === 'create'" class="space-y-5 mb-6">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1.5">嫌疑人姓名</label>
+                                        <input type="text" v-model="modalSuspectName"
+                                            class="w-full border border-gray-300 px-3 py-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none"
+                                            placeholder="请输入真实姓名">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1.5">查看密码 <span
+                                                class="text-xs text-gray-400 font-normal">(最少3位)</span></label>
+                                        <input type="password" v-model="modalSuspectPassword"
+                                            class="w-full border border-gray-300 px-3 py-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none"
+                                            placeholder="设置访问密码">
+                                    </div>
+                                </div>
+
+                                <div class="mb-6">
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">账单文件 <span
+                                            class="text-xs text-gray-500 font-normal">(支持多选 PDF)</span></label>
+                                    <div class="border-2 border-dashed border-gray-300 hover:border-blue-400 transition-colors p-6 text-center rounded-xl bg-gray-50/50 group cursor-pointer"
+                                        @click="$refs.modalFileInput.click()">
+                                        <input type="file" ref="modalFileInput" multiple accept=".pdf" class="hidden"
+                                            @change="handleModalFileChange">
+
+                                        <div v-if="modalFiles.length === 0" class="space-y-2">
+                                            <div
+                                                class="mx-auto h-12 w-12 text-gray-400 group-hover:text-blue-500 transition-colors">
+                                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="1.5"
+                                                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12">
+                                                    </path>
+                                                </svg>
+                                            </div>
+                                            <p class="text-sm text-gray-500 group-hover:text-gray-700">点击选择或拖拽文件到此处</p>
+                                        </div>
+
+                                        <div v-else class="text-left">
+                                            <ul class="max-h-40 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                                                <li v-for="(file, index) in modalFiles" :key="index"
+                                                    class="flex justify-between items-center p-2 bg-white rounded border border-gray-200 shadow-sm text-sm">
+                                                    <div class="flex items-center gap-2 truncate">
+                                                        <svg class="w-4 h-4 text-red-500 shrink-0" fill="currentColor"
+                                                            viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd"
+                                                                d="M4 4a2 2 0 012-2h4.586A2 2 0 0111.414 2.586L15 6.172A2 2 0 0115.586 7.586V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
+                                                                clip-rule="evenodd"></path>
+                                                        </svg>
+                                                        <span class="truncate text-gray-700">{{ file.name }}</span>
+                                                    </div>
+                                                    <button @click.stop="removeModalFile(index)"
+                                                        class="text-gray-400 hover:text-red-500 p-1 rounded-full hover:bg-gray-100 transition-all">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor"
+                                                            viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                                                stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                        </svg>
+                                                    </button>
+                                                </li>
+                                            </ul>
+                                            <div class="mt-3 text-center">
+                                                <button class="text-xs text-blue-600 hover:text-blue-800 font-medium">+
+                                                    继续添加文件</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div v-if="uploadError"
+                                    class="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg flex items-start gap-2">
+                                    <svg class="w-5 h-5 text-red-500 shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                                        viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    <span class="text-red-600 text-sm">{{ uploadError }}</span>
+                                </div>
+
+                                <div v-if="uploadResult"
+                                    class="mb-4 bg-green-50 border border-green-100 rounded-lg p-3 max-h-32 overflow-y-auto text-sm">
+                                    <div v-for="(res, idx) in uploadResult" :key="idx"
+                                        class="flex items-start gap-2 mb-1 last:mb-0">
+                                        <svg class="w-4 h-4 text-green-500 shrink-0 mt-0.5" fill="none"
+                                            stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M5 13l4 4L19 7"></path>
+                                        </svg>
+                                        <div class="text-gray-700">
+                                            <span class="font-medium text-gray-900">{{ res.filename }}</span>:
+                                            解析 {{ res.parsed_count }} 条，入库 {{ res.inserted_count }} 条
+                                            <span v-if="res.error" class="text-red-500 block ml-0">错误: {{ res.error
+                                                }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-100">
+                                <button @click="closeSuspectModal"
+                                    class="px-5 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-lg text-sm font-medium transition-colors">取消</button>
+                                <button @click="saveSuspectAndUpload" :disabled="uploading"
+                                    class="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2">
+                                    <svg v-if="uploading" class="animate-spin h-4 w-4 text-white"
+                                        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                            stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor"
+                                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                                        </path>
+                                    </svg>
+                                    {{ uploading ? '处理中...' : '保存档案' }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </transition>
+
+                <!-- Manage Modal -->
+                <transition name="fade">
+                    <div v-if="showManageModal"
+                        class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div
+                            class="bg-white rounded-2xl shadow-2xl w-full max-w-md transform transition-all scale-100 overflow-hidden">
+                            <div
+                                class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                                <h3 class="text-lg font-bold text-gray-800">管理嫌疑人档案</h3>
+                                <button @click="showManageModal = false" class="text-gray-400 hover:text-gray-600">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="p-6">
+                                <h4 class="text-sm font-medium text-gray-700 mb-3">已上传账单文件</h4>
+                                <div v-if="manageFiles.length === 0" class="text-gray-400 text-sm italic mb-6">暂无文件
+                                </div>
+                                <ul class="max-h-60 overflow-y-auto space-y-2 mb-6 custom-scrollbar">
+                                    <li v-for="file in manageFiles" :key="file"
+                                        class="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100 text-sm">
+                                        <span class="truncate text-gray-700 flex-1 mr-2" :title="file">{{ file }}</span>
+                                        <button @click="deleteFile(file)"
+                                            class="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded transition-colors"
+                                            title="删除此文件">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
+                                                </path>
+                                            </svg>
+                                        </button>
+                                    </li>
+                                </ul>
+                                <div class="border-t border-gray-100 pt-6">
+                                    <button @click="deleteSuspect"
+                                        class="w-full py-2.5 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors flex items-center justify-center gap-2">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
+                                            </path>
+                                        </svg>
+                                        删除该嫌疑人及其所有数据
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </transition>
+
+                <!-- Verify Modal -->
+                <transition name="fade">
+                    <div v-if="showVerifyModal"
+                        class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div
+                            class="bg-white rounded-2xl shadow-2xl w-full max-w-sm transform transition-all scale-100 overflow-hidden">
+                            <div class="p-6">
+                                <h3 class="text-lg font-bold text-gray-800 mb-4 text-center">请输入查看密码</h3>
+                                <input type="password" v-model="verifyPasswordInput" @keyup.enter="verifyPassword"
+                                    placeholder="输入密码"
+                                    class="w-full border border-gray-300 px-4 py-2 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none mb-4 text-center tracking-widest">
+                                <div class="flex gap-3">
+                                    <button @click="showVerifyModal = false"
+                                        class="flex-1 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">取消</button>
+                                    <button @click="verifyPassword"
+                                        class="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">确认</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </transition>
+            </div>
+
+            <!-- Dashboard Tab -->
+            <div v-if="currentTab === 'dashboard'" class="space-y-6">
+                <div v-if="!activeSuspect"
+                    class="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-start gap-3">
+                    <svg class="w-6 h-6 text-yellow-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                        </path>
+                    </svg>
+                    <div>
+                        <h4 class="font-bold text-yellow-800">未选择嫌疑人</h4>
+                        <p class="text-sm text-yellow-700 mt-1">
+                            请先在 <span class="font-bold cursor-pointer underline hover:text-yellow-900"
+                                @click="currentTab = 'upload'">嫌疑人管理</span> 页面选择一个嫌疑人。
+                        </p>
+                    </div>
+                </div>
+                <div v-else
+                    class="bg-blue-50 border border-blue-200 rounded-xl p-4 flex justify-between items-center shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div
+                            class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
+                            {{ activeSuspect.name.charAt(0) }}
+                        </div>
+                        <div>
+                            <span class="text-xs text-blue-500 font-bold uppercase tracking-wide">当前分析对象</span>
+                            <h3 class="text-blue-900 font-bold text-lg">{{ activeSuspect.name }}</h3>
+                        </div>
+                    </div>
+                    <button @click="currentTab = 'upload'"
+                        class="text-sm bg-white border border-blue-200 text-blue-600 px-4 py-2 rounded-lg hover:bg-blue-50 hover:text-blue-800 transition-colors shadow-sm">
+                        切换嫌疑人
+                    </button>
+                </div>
+
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <div class="flex flex-wrap gap-4 items-center">
+                        <button @click="resetDashboardFilters"
+                            :class="['px-4 py-2 rounded-lg font-medium transition-all text-sm', isAllTime ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']">
+                            全部时间
+                        </button>
+                        <div class="h-6 w-px bg-gray-200 mx-2"></div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-gray-500 text-sm font-medium">时间范围</span>
+                            <input type="text" id="dash-start" v-model="dashboardFilters.start_date"
+                                class="border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-32 transition-all"
+                                placeholder="开始日期">
+                            <span class="text-gray-400">-</span>
+                            <input type="text" id="dash-end" v-model="dashboardFilters.end_date"
+                                class="border border-gray-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-32 transition-all"
+                                placeholder="结束日期">
+                        </div>
+                        <div class="h-6 w-px bg-gray-200 mx-2"></div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-gray-500 text-sm font-medium">只看特殊金额</span>
+                            <div class="relative">
+                                <span class="absolute left-3 top-2 text-gray-400 text-sm">¥</span>
+                                <input type="number" step="0.01" v-model="dashboardFilters.specific_amount"
+                                    @change="onDashboardFilterChange" placeholder="输入金额(如 598)"
+                                    class="border border-gray-300 pl-7 pr-3 py-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-56 transition-all">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div
+                        class="bg-gradient-to-br from-green-50 to-emerald-50 p-6 rounded-2xl border border-green-100 shadow-sm relative overflow-hidden group">
+                        <div class="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                            <svg class="w-24 h-24 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd"
+                                    d="M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z"
+                                    clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-green-800 font-medium text-sm uppercase tracking-wider mb-1">总收入</h3>
+                        <p class="text-4xl font-bold text-green-600 tracking-tight">¥ {{
+                            formatMoney(summary.total_income) }}</p>
+                    </div>
+                    <div
+                        class="bg-gradient-to-br from-red-50 to-rose-50 p-6 rounded-2xl border border-red-100 shadow-sm relative overflow-hidden group">
+                        <div class="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                            <svg class="w-24 h-24 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd"
+                                    d="M16.707 10.293a1 1 0 010 1.414l-6 6a1 1 0 01-1.414 0l-6-6a1 1 0 111.414-1.414L9 14.586V3a1 1 0 012 0v11.586l4.293-4.293a1 1 0 011.414 0z"
+                                    clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-red-800 font-medium text-sm uppercase tracking-wider mb-1">总支出</h3>
+                        <p class="text-4xl font-bold text-red-600 tracking-tight">¥ {{
+                            formatMoney(summary.total_expense) }}</p>
+                    </div>
+                </div>
+
+                <!-- Charts -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                        <div class="flex justify-between items-center mb-6">
+                            <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <span class="w-1 h-6 bg-blue-500 rounded-full"></span>
+                                交易对象 TOP 10 (收+支)
+                            </h3>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-500">显示空交易对象</span>
+                                <button
+                                    @click="dashboardFilters.showEmptyCounterparty = !dashboardFilters.showEmptyCounterparty; onDashboardFilterChange()"
+                                    :class="['w-10 h-5 rounded-full relative transition-colors duration-200 ease-in-out focus:outline-none', dashboardFilters.showEmptyCounterparty ? 'bg-blue-600' : 'bg-gray-200']">
+                                    <span
+                                        :class="['absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform duration-200 ease-in-out shadow-sm', dashboardFilters.showEmptyCounterparty ? 'translate-x-5' : 'translate-x-0']"></span>
+                                </button>
+                            </div>
+                        </div>
+                        <div ref="pieChart" class="chart-container"></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 relative">
+                        <div class="flex justify-between items-center mb-6">
+                            <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <span class="w-1 h-6 bg-purple-500 rounded-full"></span>
+                                收支趋势
+                            </h3>
+                            <!-- Day/Night Filter -->
+                            <div class="flex bg-gray-100 p-1 rounded-lg">
+                                <button @click="setTimeRange('all')"
+                                    :class="['px-3 py-1 rounded-md text-xs font-medium transition-all', dashboardFilters.time_range === 'all' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700']">
+                                    全天
+                                </button>
+                                <button @click="setTimeRange('day')"
+                                    :class="['px-3 py-1 rounded-md text-xs font-medium transition-all', dashboardFilters.time_range === 'day' ? 'bg-white text-yellow-600 shadow-sm' : 'text-gray-500 hover:text-gray-700']">
+                                    白天
+                                </button>
+                                <button @click="setTimeRange('night')"
+                                    :class="['px-3 py-1 rounded-md text-xs font-medium transition-all', dashboardFilters.time_range === 'night' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700']">
+                                    夜间
+                                </button>
+                            </div>
+                        </div>
+                        <div ref="lineChart" class="chart-container"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transactions Tab -->
+            <div v-if="currentTab === 'transactions'" class="space-y-6">
+                <!-- No Suspect Warning -->
+                <div v-if="!activeSuspect"
+                    class="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-start gap-3">
+                    <svg class="w-6 h-6 text-yellow-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                        </path>
+                    </svg>
+                    <div>
+                        <h4 class="font-bold text-yellow-800">未选择嫌疑人</h4>
+                        <p class="text-sm text-yellow-700 mt-1">
+                            请先在 <span class="font-bold cursor-pointer underline hover:text-yellow-900"
+                                @click="currentTab = 'upload'">嫌疑人管理</span> 页面选择一个嫌疑人。
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Active Suspect Banner -->
+                <div v-else
+                    class="bg-blue-50 border border-blue-200 rounded-xl p-4 flex justify-between items-center shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div
+                            class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
+                            {{ activeSuspect.name.charAt(0) }}
+                        </div>
+                        <div>
+                            <span class="text-xs text-blue-500 font-bold uppercase tracking-wide">当前分析对象</span>
+                            <h3 class="text-blue-900 font-bold text-lg">{{ activeSuspect.name }}</h3>
+                        </div>
+                    </div>
+                    <button @click="currentTab = 'upload'"
+                        class="text-sm bg-white border border-blue-200 text-blue-600 px-4 py-2 rounded-lg hover:bg-blue-50 hover:text-blue-800 transition-colors shadow-sm">
+                        切换嫌疑人
+                    </button>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="p-6 border-b border-gray-100 bg-gray-50/30">
+                        <div class="flex justify-between items-center mb-6">
+                            <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                                <span class="w-1 h-6 bg-blue-600 rounded-full"></span>
+                                交易明细查询
+                            </h2>
+                            <button @click="clearFilters"
+                                class="text-sm text-gray-500 hover:text-red-600 flex items-center gap-1 transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                                清空筛选
+                            </button>
+                        </div>
+
+                        <!-- Filters -->
+                        <div class="space-y-4">
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 mb-1">开始日期</label>
+                                    <input type="text" id="trans-start" v-model="filters.start_date"
+                                        class="w-full border border-gray-300 px-3 py-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                        placeholder="选择日期">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 mb-1">结束日期</label>
+                                    <input type="text" id="trans-end" v-model="filters.end_date"
+                                        class="w-full border border-gray-300 px-3 py-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                        placeholder="选择日期">
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="block text-xs font-medium text-gray-500 mb-1">交易对象</label>
+                                    <div class="relative">
+                                        <input type="text" v-model="filters.counterparty"
+                                            placeholder="精确搜索交易对象，逗号隔开搜索多人"
+                                            class="w-full border border-gray-300 px-3 py-2 pl-9 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all">
+                                        <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none"
+                                            stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                                        </svg>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 mb-1">收/支类型</label>
+                                    <select v-model="filters.category"
+                                        class="w-full border border-gray-300 px-3 py-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all bg-white">
+                                        <option value="">全部</option>
+                                        <option value="收入">收入</option>
+                                        <option value="支出">支出</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 mb-1">交易类型</label>
+                                    <input type="text" v-model="filters.transaction_type" placeholder="如：转账、红包"
+                                        class="w-full border border-gray-300 px-3 py-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 mb-1">商品/说明</label>
+                                    <input type="text" v-model="filters.method" placeholder="关键词搜索"
+                                        class="w-full border border-gray-300 px-3 py-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 mb-1">金额范围</label>
+                                    <div class="flex gap-2">
+                                        <input type="number" step="0.01" v-model="filters.min_amount" placeholder="Min"
+                                            class="w-full border border-gray-300 px-3 py-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all">
+                                        <input type="number" step="0.01" v-model="filters.max_amount" placeholder="Max"
+                                            class="w-full border border-gray-300 px-3 py-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex justify-end pt-2">
+                                <button @click="searchTransactions"
+                                    class="bg-blue-600 text-white px-8 py-2 rounded-lg font-medium hover:bg-blue-700 hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200 flex items-center gap-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                                    </svg>
+                                    查询记录
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Table -->
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full table-auto">
+                            <thead class="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        时间</th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        类型</th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        交易对象</th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        商品/说明</th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        金额</th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        收/支</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <tr v-for="t in transactions" :key="t.id" class="hover:bg-gray-50 transition-colors">
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{{
+                                        formatDate(t.transaction_time) }}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        <span
+                                            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 cursor-pointer hover:bg-purple-200 transition-colors"
+                                            @click="searchTransactionType(t.transaction_type)">
+                                            {{ t.transaction_type }}
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 text-sm">
+                                        <span class="text-blue-600 cursor-pointer hover:underline font-medium"
+                                            @click="searchCounterparty(t.counterparty)">
+                                            {{ t.counterparty }}
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 text-sm text-gray-500 max-w-xs truncate" :title="t.method">{{
+                                        t.method }}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-mono font-medium">{{
+                                        formatMoney(t.amount) }}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        <span
+                                            :class="['px-2 inline-flex text-xs leading-5 font-semibold rounded-full', t.category === '收入' ? 'bg-green-100 text-green-800' : t.category === '支出' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800']">
+                                            {{ t.category }}
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr v-if="transactions.length === 0">
+                                    <td colspan="6" class="px-6 py-10 text-center text-gray-500">
+                                        <svg class="mx-auto h-12 w-12 text-gray-300" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+                                            </path>
+                                        </svg>
+                                        <p class="mt-2 text-sm">暂无交易记录</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
+                        <span class="text-sm text-gray-600">
+                            共 <span class="font-medium text-gray-900">{{ totalTransactions }}</span> 条记录，
+                            总金额: <span class="font-bold text-blue-600 font-mono">¥ {{ formatMoney(totalAmount) }}</span>
+                        </span>
+                        <div class="flex items-center gap-2">
+                            <button @click="page > 1 && (page--, fetchTransactions())" :disabled="page === 1"
+                                class="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                上一页
+                            </button>
+                            <span class="text-sm text-gray-600">
+                                第 <span class="font-medium">{{ page }}</span> / {{ Math.ceil(totalTransactions / limit)
+                                || 1 }} 页
+                            </span>
+                            <button @click="transactions.length === limit && (page++, fetchTransactions())"
+                                :disabled="transactions.length < limit"
+                                class="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                下一页
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const { createApp, ref, onMounted, watch, nextTick } = Vue;
+
+            createApp({
+                setup() {
+                    const currentTab = ref('upload');
+
+                    // Suspect Management
+                    const suspects = ref([]);
+                    const activeSuspect = ref(null);
+                    const suspectSearch = ref('');
+                    const showSuspectModal = ref(false);
+                    const modalMode = ref('create'); // 'create' or 'append'
+                    const modalSuspectName = ref('');
+                    const modalSuspectPassword = ref('');
+                    const modalFiles = ref([]);
+                    const modalSuspectId = ref(null);
+
+                    // Manage & Verify State
+                    const showManageModal = ref(false);
+                    const manageFiles = ref([]);
+                    const manageSuspectId = ref(null);
+                    const showVerifyModal = ref(false);
+                    const verifyPasswordInput = ref('');
+                    const verifyTargetSuspect = ref(null);
+
+                    // Dashboard & Transactions
+                    const summary = ref({ total_income: 0, total_expense: 0 });
+                    const transactions = ref([]);
+                    const totalTransactions = ref(0);
+                    const totalAmount = ref(0);
+                    const page = ref(1);
+                    const limit = 20;
+
+                    const uploading = ref(false);
+                    const uploadResult = ref(null);
+                    const uploadError = ref(null);
+
+                    const filters = ref({
+                        start_date: '',
+                        end_date: '',
+                        counterparty: '',
+                        category: '',
+                        transaction_type: '',
+                        method: '',
+                        min_amount: '',
+                        max_amount: ''
+                    });
+
+                    const dashboardFilters = ref({
+                        start_date: '',
+                        end_date: '',
+                        specific_amount: '',
+                        time_range: 'all', // all, day, night
+                        showEmptyCounterparty: true
+                    });
+
+                    const isAllTime = ref(true);
+
+                    const pieChart = ref(null);
+                    const lineChart = ref(null);
+                    let myPieChart = null;
+                    let myLineChart = null;
+                    const datePickers = {}; // Store picker instances
+
+                    const initDashboardPickers = () => {
+                        // Initialize Flatpickr
+                        const commonConfig = {
+                            locale: "zh",
+                            dateFormat: "Y-m-d",
+                            disableMobile: true, // Use Flatpickr UI on mobile too for consistency
+                            allowInput: true
+                        };
+
+                        // Dashboard Start Date
+                        if (document.querySelector("#dash-start")) {
+                            datePickers.dashStart = flatpickr("#dash-start", {
+                                ...commonConfig,
+                                onChange: (selectedDates, dateStr) => {
+                                    dashboardFilters.value.start_date = dateStr;
+                                    onDashboardFilterChange();
+                                }
+                            });
+                        }
+
+                        // Dashboard End Date
+                        if (document.querySelector("#dash-end")) {
+                            datePickers.dashEnd = flatpickr("#dash-end", {
+                                ...commonConfig,
+                                onChange: (selectedDates, dateStr) => {
+                                    dashboardFilters.value.end_date = dateStr;
+                                    onDashboardFilterChange();
+                                }
+                            });
+                        }
+                    };
+
+                    const initTransactionPickers = () => {
+                        // Initialize Flatpickr
+                        const commonConfig = {
+                            locale: "zh",
+                            dateFormat: "Y-m-d",
+                            disableMobile: true, // Use Flatpickr UI on mobile too for consistency
+                            allowInput: true
+                        };
+
+                        // Transactions Start Date
+                        if (document.querySelector("#trans-start")) {
+                            datePickers.transStart = flatpickr("#trans-start", {
+                                ...commonConfig,
+                                onChange: (selectedDates, dateStr) => {
+                                    filters.value.start_date = dateStr;
+                                }
+                            });
+                        }
+
+                        // Transactions End Date
+                        if (document.querySelector("#trans-end")) {
+                            datePickers.transEnd = flatpickr("#trans-end", {
+                                ...commonConfig,
+                                onChange: (selectedDates, dateStr) => {
+                                    filters.value.end_date = dateStr;
+                                }
+                            });
+                        }
+                    };
+
+                    onMounted(() => {
+                        loadSuspects();
+                        // If no suspects, stay on upload tab.
+                    });
+
+                    // --- Suspect Methods ---
+                    const loadSuspects = async () => {
+                        let url = '/suspects';
+                        if (suspectSearch.value) {
+                            url += `?search=${suspectSearch.value}`;
+                        }
+                        const res = await fetch(url);
+                        suspects.value = await res.json();
+                    };
+
+                    const openSuspectModal = (mode, suspect = null) => {
+                        modalMode.value = mode;
+                        uploadResult.value = null;
+                        uploadError.value = null;
+                        modalFiles.value = [];
+
+                        if (mode === 'create') {
+                            modalSuspectName.value = '';
+                            modalSuspectPassword.value = '';
+                            modalSuspectId.value = null;
+                        } else if (mode === 'append' && suspect) {
+                            modalSuspectName.value = suspect.name;
+                            modalSuspectId.value = suspect.id;
+                            // For append, we assume authenticated session or simplified flow
+                            modalSuspectPassword.value = '';
+                        }
+                        showSuspectModal.value = true;
+                    };
+
+                    const closeSuspectModal = () => {
+                        showSuspectModal.value = false;
+                        loadSuspects(); // Refresh list
+                    };
+
+                    const handleModalFileChange = (e) => {
+                        const files = Array.from(e.target.files);
+                        modalFiles.value = [...modalFiles.value, ...files];
+                        // Reset input so same files can be selected again if needed
+                        e.target.value = '';
+                    };
+
+                    const removeModalFile = (index) => {
+                        modalFiles.value.splice(index, 1);
+                    };
+
+                    const openManageModal = async (suspect) => {
+                        manageSuspectId.value = suspect.id;
+                        const res = await fetch(`/suspects/${suspect.id}/files`);
+                        manageFiles.value = await res.json();
+                        showManageModal.value = true;
+                    };
+
+                    const deleteFile = async (filename) => {
+                        if (!confirm(`确定要删除文件 "${filename}" 及其所有交易记录吗？`)) return;
+                        await fetch(`/suspects/${manageSuspectId.value}/files?filename=${encodeURIComponent(filename)}`, {
+                            method: 'DELETE'
+                        });
+                        const res = await fetch(`/suspects/${manageSuspectId.value}/files`);
+                        manageFiles.value = await res.json();
+                        loadSuspects();
+                    };
+
+                    const deleteSuspect = async () => {
+                        if (!confirm('确定要删除该嫌疑人及其所有数据吗？此操作不可恢复！')) return;
+                        await fetch(`/suspects/${manageSuspectId.value}`, {
+                            method: 'DELETE'
+                        });
+                        showManageModal.value = false;
+                        if (activeSuspect.value && activeSuspect.value.id === manageSuspectId.value) {
+                            activeSuspect.value = null;
+                        }
+                        loadSuspects();
+                    };
+
+                    const promptVerify = (suspect) => {
+                        verifyTargetSuspect.value = suspect;
+                        verifyPasswordInput.value = '';
+                        showVerifyModal.value = true;
+                    };
+
+                    const verifyPassword = async () => {
+                        if (!verifyPasswordInput.value) return;
+                        try {
+                            const res = await fetch('/suspects/verify', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    suspect_id: verifyTargetSuspect.value.id,
+                                    password: verifyPasswordInput.value
+                                })
+                            });
+                            if (res.ok) {
+                                showVerifyModal.value = false;
+                                activeSuspect.value = verifyTargetSuspect.value;
+                                currentTab.value = 'dashboard';
+                                resetDashboardFilters();
+                            } else {
+                                alert('密码错误');
+                            }
+                        } catch (e) {
+                            alert('验证失败');
+                        }
+                    };
+
+                    const saveSuspectAndUpload = async () => {
+                        uploading.value = true;
+                        uploadError.value = null;
+                        uploadResult.value = null;
+
+                        try {
+                            let suspectId = modalSuspectId.value;
+
+                            // 1. Create Suspect if needed
+                            if (modalMode.value === 'create') {
+                                if (!modalSuspectName.value || !modalSuspectPassword.value) {
+                                    throw new Error("请填写姓名和密码");
+                                }
+                                if (modalSuspectPassword.value.length < 3) {
+                                    throw new Error("密码长度至少3位");
+                                }
+
+                                const res = await fetch('/suspects', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        name: modalSuspectName.value,
+                                        password: modalSuspectPassword.value
+                                    })
+                                });
+
+                                if (!res.ok) {
+                                    const err = await res.json();
+                                    throw new Error(err.detail || "创建嫌疑人失败");
+                                }
+                                const data = await res.json();
+                                suspectId = data.id;
+                            }
+
+                            // 2. Upload Files if any
+                            if (modalFiles.value.length > 0) {
+                                const formData = new FormData();
+                                formData.append('suspect_id', suspectId);
+                                modalFiles.value.forEach(file => {
+                                    formData.append('files', file);
+                                });
+
+                                const resUpload = await fetch('/upload', {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                if (!resUpload.ok) {
+                                    const err = await resUpload.json();
+                                    throw new Error(err.detail || "上传失败");
+                                }
+                                uploadResult.value = await resUpload.json();
+
+                                // Check for partial errors
+                                const hasError = uploadResult.value.some(r => r.error);
+                                if (!hasError) {
+                                    modalFiles.value = [];
+                                    await loadSuspects();
+
+                                    const targetSuspect = suspects.value.find(s => s.id === suspectId);
+                                    if (targetSuspect) {
+                                        activeSuspect.value = targetSuspect;
+                                        currentTab.value = 'dashboard';
+                                        resetDashboardFilters();
+                                        showSuspectModal.value = false;
+                                    }
+                                }
+                            } else if (modalMode.value === 'create') {
+                                // Created but no files
+                                closeSuspectModal();
+                            }
+
+                        } catch (e) {
+                            uploadError.value = e.message;
+                        } finally {
+                            uploading.value = false;
+                        }
+                    };
+
+                    // --- Data Fetching ---
+
+                    const loadDashboardData = async () => {
+                        if (!activeSuspect.value) return;
+
+                        let queryParams = new URLSearchParams();
+                        queryParams.append('suspect_id', activeSuspect.value.id);
+
+                        if (dashboardFilters.value.start_date) queryParams.append('start_date', dashboardFilters.value.start_date);
+                        if (dashboardFilters.value.end_date) queryParams.append('end_date', dashboardFilters.value.end_date);
+                        if (dashboardFilters.value.specific_amount) queryParams.append('specific_amount', dashboardFilters.value.specific_amount);
+                        if (dashboardFilters.value.time_range && dashboardFilters.value.time_range !== 'all') {
+                            queryParams.append('time_range', dashboardFilters.value.time_range);
+                        }
+
+                        const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+                        // Summary
+                        const resSummary = await fetch(`/stats/summary${queryString}`);
+                        summary.value = await resSummary.json();
+
+                        // Charts
+                        if (currentTab.value === 'dashboard') {
+                            initCharts(queryString);
+                        }
+                    };
+
+                    const initCharts = async (queryString = '') => {
+                        await nextTick(); // Wait for DOM
+
+                        // Pie Chart
+                        const resPie = await fetch(`/stats/by-counterparty?limit=20${queryString ? '&' + queryString.substring(1) : ''}`);
+                        let dataPie = await resPie.json();
+
+                        if (!dashboardFilters.value.showEmptyCounterparty) {
+                            dataPie = dataPie.filter(item => {
+                                const name = item.name;
+                                return name && name.trim() !== '' && name !== '/' && name !== '-';
+                            });
+                        }
+                        dataPie = dataPie.slice(0, 10);
+
+                        if (pieChart.value) {
+                            if (myPieChart) myPieChart.dispose();
+                            myPieChart = echarts.init(pieChart.value);
+                            myPieChart.setOption({
+                                title: { text: '来往资金分布', left: 'center' },
+                                tooltip: { trigger: 'item' },
+                                series: [
+                                    {
+                                        name: '金额',
+                                        type: 'pie',
+                                        radius: '50%',
+                                        data: dataPie,
+                                        emphasis: {
+                                            itemStyle: {
+                                                shadowBlur: 10,
+                                                shadowOffsetX: 0,
+                                                shadowColor: 'rgba(0, 0, 0, 0.5)'
+                                            }
+                                        }
+                                    }
+                                ]
+                            });
+                            myPieChart.on('click', (params) => {
+                                filters.value.counterparty = params.name;
+                                filters.value.start_date = dashboardFilters.value.start_date;
+                                filters.value.end_date = dashboardFilters.value.end_date;
+                                currentTab.value = 'transactions';
+                                nextTick(() => {
+                                    searchTransactions();
+                                });
+                            });
+                        }
+
+                        // Line Chart
+                        const resLine = await fetch(`/stats/by-date${queryString}`);
+                        const dataLine = await resLine.json();
+
+                        if (lineChart.value) {
+                            if (myLineChart) myLineChart.dispose();
+                            myLineChart = echarts.init(lineChart.value);
+                            myLineChart.setOption({
+                                title: { text: '收支趋势', left: 'center' },
+                                tooltip: { trigger: 'axis' },
+                                legend: { data: ['收入', '支出'], top: 'bottom' },
+                                xAxis: { type: 'category', data: dataLine.dates },
+                                yAxis: { type: 'value' },
+                                series: [
+                                    { name: '收入', type: 'line', data: dataLine.income, itemStyle: { color: '#10B981' } },
+                                    { name: '支出', type: 'line', data: dataLine.expense, itemStyle: { color: '#EF4444' } }
+                                ]
+                            });
+                            myLineChart.getZr().on('click', (params) => {
+                                const pointInPixel = [params.offsetX, params.offsetY];
+                                if (myLineChart.containPixel('grid', pointInPixel)) {
+                                    const xIndex = myLineChart.convertFromPixel({ seriesIndex: 0 }, pointInPixel)[0];
+                                    const date = dataLine.dates[xIndex];
+                                    if (date) {
+                                        filters.value.start_date = date;
+                                        filters.value.end_date = date;
+                                        filters.value.counterparty = ''; // Clear counterparty
+                                        currentTab.value = 'transactions';
+                                        nextTick(() => {
+                                            searchTransactions();
+                                        });
+                                    }
+                                }
+                            });
+                        }
+                    };
+
+                    const fetchTransactions = async () => {
+                        if (!activeSuspect.value) return;
+
+                        const skip = (page.value - 1) * limit;
+                        let url = `/transactions?skip=${skip}&limit=${limit}&suspect_id=${activeSuspect.value.id}`;
+                        if (filters.value.start_date) url += `&start_date=${filters.value.start_date}`;
+                        if (filters.value.end_date) url += `&end_date=${filters.value.end_date}`;
+                        if (filters.value.counterparty) url += `&counterparty=${filters.value.counterparty}`;
+                        if (filters.value.category) url += `&category=${filters.value.category}`;
+                        if (filters.value.transaction_type) url += `&transaction_type=${filters.value.transaction_type}`;
+                        if (filters.value.method) url += `&method=${filters.value.method}`;
+                        if (filters.value.min_amount) url += `&min_amount=${filters.value.min_amount}`;
+                        if (filters.value.max_amount) url += `&max_amount=${filters.value.max_amount}`;
+
+                        const res = await fetch(url);
+                        const data = await res.json();
+                        transactions.value = data.data;
+                        totalTransactions.value = data.total;
+                        totalAmount.value = data.total_amount;
+                    };
+
+                    const searchTransactions = () => {
+                        page.value = 1;
+                        fetchTransactions();
+                    };
+
+                    // Watchers
+                    watch(() => dashboardFilters.value.start_date, (newVal) => {
+                        if (datePickers.dashStart && datePickers.dashStart.input && newVal !== datePickers.dashStart.input.value) {
+                            datePickers.dashStart.setDate(newVal, false);
+                        }
+                    });
+                    watch(() => dashboardFilters.value.end_date, (newVal) => {
+                        if (datePickers.dashEnd && datePickers.dashEnd.input && newVal !== datePickers.dashEnd.input.value) {
+                            datePickers.dashEnd.setDate(newVal, false);
+                        }
+                    });
+                    watch(() => filters.value.start_date, (newVal) => {
+                        if (datePickers.transStart && datePickers.transStart.input && newVal !== datePickers.transStart.input.value) {
+                            datePickers.transStart.setDate(newVal, false);
+                        }
+                    });
+                    watch(() => filters.value.end_date, (newVal) => {
+                        if (datePickers.transEnd && datePickers.transEnd.input && newVal !== datePickers.transEnd.input.value) {
+                            datePickers.transEnd.setDate(newVal, false);
+                        }
+                    });
+
+                    watch(currentTab, (val) => {
+                        if (val === 'dashboard') {
+                            loadDashboardData();
+                            nextTick(() => {
+                                initDashboardPickers();
+                            });
+                        } else if (val === 'transactions') {
+                            fetchTransactions();
+                            nextTick(() => {
+                                initTransactionPickers();
+                            });
+                        }
+                    });
+
+                    // Helpers
+                    const formatMoney = (val) => {
+                        if (val === null || val === undefined) return '0.00';
+                        return val.toFixed(2);
+                    };
+
+                    const formatDate = (str) => {
+                        return str ? str.replace('T', ' ') : '';
+                    };
+
+                    const resetDashboardFilters = () => {
+                        dashboardFilters.value = {
+                            start_date: '',
+                            end_date: '',
+                            specific_amount: '',
+                            time_range: 'all',
+                            showEmptyCounterparty: true
+                        };
+                        isAllTime.value = true;
+                        loadDashboardData();
+                    };
+
+                    const onDashboardFilterChange = () => {
+                        isAllTime.value = !dashboardFilters.value.start_date && !dashboardFilters.value.end_date && !dashboardFilters.value.specific_amount;
+                        loadDashboardData();
+                    };
+
+                    const setTimeRange = (range) => {
+                        dashboardFilters.value.time_range = range;
+                        loadDashboardData();
+                    };
+
+                    const clearFilters = () => {
+                        filters.value = {
+                            start_date: '',
+                            end_date: '',
+                            counterparty: '',
+                            category: '',
+                            transaction_type: '',
+                            method: '',
+                            min_amount: '',
+                            max_amount: ''
+                        };
+                        searchTransactions();
+                    };
+
+                    const searchCounterparty = (name) => {
+                        filters.value.counterparty = name;
+                        searchTransactions();
+                    };
+
+                    const searchTransactionType = (type) => {
+                        filters.value.transaction_type = type;
+                        searchTransactions();
+                    };
+
+                    return {
+                        currentTab,
+                        // Suspect State
+                        suspects,
+                        activeSuspect,
+                        suspectSearch,
+                        showSuspectModal,
+                        modalMode,
+                        modalSuspectName,
+                        modalSuspectPassword,
+                        modalFiles,
+                        loadSuspects,
+                        openSuspectModal,
+                        closeSuspectModal,
+                        handleModalFileChange,
+                        removeModalFile,
+                        saveSuspectAndUpload,
+
+                        // Manage & Verify
+                        openManageModal,
+                        deleteFile,
+                        deleteSuspect,
+                        promptVerify,
+                        verifyPassword,
+                        showManageModal,
+                        manageFiles,
+                        showVerifyModal,
+                        verifyPasswordInput,
+
+                        uploading,
+                        uploadResult,
+                        uploadError,
+                        summary,
+                        transactions,
+                        totalTransactions,
+                        totalAmount,
+                        page,
+                        limit,
+                        filters,
+                        pieChart,
+                        lineChart,
+                        dashboardFilters,
+                        isAllTime,
+                        resetDashboardFilters,
+                        onDashboardFilterChange,
+                        setTimeRange,
+                        formatMoney,
+                        formatDate,
+                        fetchTransactions,
+                        searchTransactions,
+                        clearFilters,
+                        searchCounterparty,
+                        searchTransactionType
+                    };
+                }
+            }).mount('#app');
+        </script>
+</body>
+
+</html>

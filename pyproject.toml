@@ -1,0 +1,15 @@
+[project]
+name = "billextra"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pdfplumber",
+    "pandas",
+    "sqlalchemy",
+    "python-multipart",
+    "aiofiles"
+]

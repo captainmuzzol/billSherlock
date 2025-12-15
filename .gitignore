@@ -1,0 +1,28 @@
+# Mac-trash
+.DS_Store
+
+# python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# IDE files
+.idea/
+.vscode/
+
+# Virtual enviroments
+.venv
+
+# Others
+backup/
+pack/
+uploads/
+*.log
+bill_app.db
+
+# Run_modules
+node_modules
+
