@@ -11,6 +11,10 @@ class Suspect(Base):
     password = Column(String) # Simple storage for this demo, usually should hash
     created_at = Column(DateTime, default=datetime.now)
     
+    # AI Analysis Cache
+    ai_analysis = Column(String, nullable=True)
+    analysis_signature = Column(String, nullable=True)
+    
     transactions = relationship("Transaction", back_populates="suspect")
 
 class Transaction(Base):

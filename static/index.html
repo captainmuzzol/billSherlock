@@ -6,16 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>账单神探</title>
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/zh.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="/static/js/vue.global.js"></script>
+    <script src="/static/js/echarts.min.js"></script>
+    <script src="/static/js/tailwindcss.js"></script>
+    <link rel="stylesheet" href="/static/css/flatpickr.min.css">
+    <script src="/static/js/flatpickr.js"></script>
+    <script src="/static/js/zh.min.js"></script>
+    <script src="/static/js/marked.min.js"></script>
     <style>
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
         }
 
         .chart-container {
@@ -32,6 +32,44 @@
         .fade-leave-to {
             opacity: 0;
         }
+
+        /* Markdown Styles */
+        .markdown-body ul {
+            list-style-type: disc;
+            padding-left: 1.5em;
+            margin: 0.5em 0;
+        }
+
+        .markdown-body ol {
+            list-style-type: decimal;
+            padding-left: 1.5em;
+            margin: 0.5em 0;
+        }
+
+        .markdown-body strong {
+            font-weight: 700;
+            color: #111827;
+        }
+
+        .markdown-body p {
+            margin-bottom: 0.75em;
+        }
+
+        .markdown-body h1,
+        .markdown-body h2,
+        .markdown-body h3 {
+            font-weight: 700;
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            color: #1f2937;
+        }
+
+        .markdown-body blockquote {
+            border-left: 4px solid #e5e7eb;
+            padding-left: 1em;
+            color: #4b5563;
+            font-style: italic;
+        }
     </style>
 </head>
 
@@ -46,7 +84,7 @@
                         onerror="this.style.display='none'">
                     <div>
                         <h1 class="text-xl font-bold text-gray-900 tracking-tight">账单神探</h1>
-                        <p class="text-xs text-gray-500">微信支付智能分析系统</p>
+                        <p class="text-xs text-gray-500">账单智能分析系统</p>
                     </div>
                 </div>
                 <nav class="flex bg-gray-100/50 p-1 rounded-lg">
@@ -201,11 +239,13 @@
 
                                 <div class="mb-6">
                                     <label class="block text-sm font-medium text-gray-700 mb-2">账单文件 <span
-                                            class="text-xs text-gray-500 font-normal">(支持多选 PDF)</span></label>
-                                    <div class="border-2 border-dashed border-gray-300 hover:border-blue-400 transition-colors p-6 text-center rounded-xl bg-gray-50/50 group cursor-pointer"
-                                        @click="$refs.modalFileInput.click()">
-                                        <input type="file" ref="modalFileInput" multiple accept=".pdf" class="hidden"
-                                            @change="handleModalFileChange">
+                                            class="text-xs text-gray-500 font-normal">(支持多选 PDF, XLSX,
+                                            XLS)</span></label>
+                                    <div :class="['border-2 border-dashed transition-colors p-6 text-center rounded-xl bg-gray-50/50 group cursor-pointer', dragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400']"
+                                        @click="$refs.modalFileInput.click()" @dragover.prevent="dragOver = true"
+                                        @dragleave.prevent="dragOver = false" @drop.prevent="handleDrop">
+                                        <input type="file" ref="modalFileInput" multiple accept=".pdf,.xlsx,.xls"
+                                            class="hidden" @change="handleModalFileChange">
 
                                         <div v-if="modalFiles.length === 0" class="space-y-2">
                                             <div
@@ -499,6 +539,40 @@
                         <div ref="lineChart" class="chart-container"></div>
                     </div>
                 </div>
+
+                <!-- AI Analysis -->
+                <div
+                    class="bg-gradient-to-r from-indigo-50 to-blue-50 p-6 rounded-2xl border border-indigo-100 shadow-sm mt-6">
+                    <div class="flex items-start gap-4">
+                        <div class="flex-shrink-0 bg-indigo-100 p-3 rounded-full">
+                            <span class="text-3xl">🤖</span>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="text-lg font-bold text-indigo-900 mb-2">AI 交易分析点评</h3>
+                            <div
+                                class="bg-white p-4 rounded-xl rounded-tl-none shadow-sm border border-indigo-100 text-gray-700 leading-relaxed relative min-h-[80px]">
+                                <div v-if="loadingAi" class="flex items-center gap-2 text-gray-500 h-full">
+                                    <svg class="animate-spin h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg"
+                                        fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                            stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor"
+                                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                                        </path>
+                                    </svg>
+                                    <span>正在分析交易数据...</span>
+                                </div>
+                                <div v-else class="markdown-body whitespace-pre-wrap"
+                                    v-html="renderMarkdown(aiAnalysis || '暂无分析数据')">
+                                </div>
+                                <!-- Bubble Tail -->
+                                <div
+                                    class="absolute top-0 -left-2 w-4 h-4 bg-white border-l border-b border-indigo-100 transform rotate-45">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Transactions Tab -->
@@ -750,6 +824,7 @@
                 const uploading = ref(false);
                 const uploadResult = ref(null);
                 const uploadError = ref(null);
+                const dragOver = ref(false);
 
                 const filters = ref({
                     start_date: '',
@@ -769,6 +844,9 @@
                     time_range: 'all', // all, day, night
                     showEmptyCounterparty: true
                 });
+
+                const aiAnalysis = ref('');
+                const loadingAi = ref(false);
 
                 const isAllTime = ref(true);
 
@@ -881,9 +959,29 @@
 
                 const handleModalFileChange = (e) => {
                     const files = Array.from(e.target.files);
-                    modalFiles.value = [...modalFiles.value, ...files];
+                    addFiles(files);
                     // Reset input so same files can be selected again if needed
                     e.target.value = '';
+                };
+
+                const handleDrop = (e) => {
+                    dragOver.value = false;
+                    const files = Array.from(e.dataTransfer.files);
+                    addFiles(files);
+                };
+
+                const addFiles = (files) => {
+                    // Filter for allowed extensions
+                    const allowed = files.filter(f => {
+                        const ext = f.name.split('.').pop().toLowerCase();
+                        return ['pdf', 'xlsx', 'xls'].includes(ext);
+                    });
+
+                    if (allowed.length < files.length) {
+                        alert(`已忽略 ${files.length - allowed.length} 个不支持的文件。仅支持 PDF, XLSX, XLS。`);
+                    }
+
+                    modalFiles.value = [...modalFiles.value, ...allowed];
                 };
 
                 const removeModalFile = (index) => {
@@ -1138,6 +1236,22 @@
                             }
                         });
                     }
+
+                    // Call AI Analysis
+                    if (!activeSuspect.value) return;
+
+                    loadingAi.value = true;
+                    aiAnalysis.value = '';
+                    try {
+                        const url = `/stats/ai-analysis${queryString ? queryString + '&' : '?'}suspect_id=${activeSuspect.value.id}`;
+                        const resAi = await fetch(url);
+                        const dataAi = await resAi.json();
+                        aiAnalysis.value = dataAi.analysis;
+                    } catch (e) {
+                        aiAnalysis.value = "AI 分析加载失败";
+                    } finally {
+                        loadingAi.value = false;
+                    }
                 };
 
                 const fetchTransactions = async () => {
@@ -1258,7 +1372,16 @@
                     searchTransactions();
                 };
 
+                const renderMarkdown = (text) => {
+                    if (!text) return '';
+                    if (window.marked) {
+                        return window.marked.parse(text);
+                    }
+                    return text;
+                };
+
                 return {
+                    renderMarkdown,
                     currentTab,
                     // Suspect State
                     suspects,
@@ -1300,6 +1423,8 @@
                     pieChart,
                     lineChart,
                     dashboardFilters,
+                    aiAnalysis,
+                    loadingAi,
                     isAllTime,
                     resetDashboardFilters,
                     onDashboardFilterChange,
@@ -1310,7 +1435,9 @@
                     searchTransactions,
                     clearFilters,
                     searchCounterparty,
-                    searchTransactionType
+                    searchTransactionType,
+                    dragOver,
+                    handleDrop
                 };
             }
         }).mount('#app');

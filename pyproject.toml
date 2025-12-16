@@ -11,5 +11,7 @@ dependencies = [
     "pandas",
     "sqlalchemy",
     "python-multipart",
-    "aiofiles"
+    "aiofiles",
+    "requests",
+    "openpyxl"
 ]

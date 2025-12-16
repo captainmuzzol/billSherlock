@@ -8,6 +8,8 @@ from typing import List, Optional
 import shutil
 import os
 import uvicorn
+import requests
+import re
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 
@@ -110,7 +112,7 @@ async def upload_file(
             shutil.copyfileobj(file.file, file_object)
         
         try:
-            data = parser.parse_pdf_bill(file_location)
+            data = parser.parse_bill_file(file_location)
             
             # Save to DB
             count = 0
@@ -378,6 +380,135 @@ def get_stats_by_date(
         "income": [data[d]["income"] for d in sorted_dates],
         "expense": [data[d]["expense"] for d in sorted_dates]
     }
+
+@app.get("/stats/ai-analysis")
+def get_ai_analysis(
+    suspect_id: int,
+    start_date: Optional[str] = None, 
+    end_date: Optional[str] = None,
+    db: Session = Depends(database.get_db)
+):
+    suspect = db.query(models.Suspect).filter(models.Suspect.id == suspect_id).first()
+    if not suspect:
+        raise HTTPException(status_code=404, detail="Suspect not found")
+
+    # 0. Check Cache (Only if no date filters, as date filters change the context)
+    # If users are filtering by date, we probably should re-analyze or just warn that analysis is based on full data.
+    # The requirement says "Unless bills appended". It implies analysis is usually on the whole dataset or the current view.
+    # Let's assume the "Signature" is based on the TOTAL number of transactions for this suspect.
+    # If the user is filtering, we might want to skip caching OR cache based on filter signature.
+    # For simplicity and robustness, let's cache based on the *current filter query* + *total data count*.
+    
+    total_tx_count = db.query(models.Transaction).filter(models.Transaction.suspect_id == suspect_id).count()
+    current_signature = f"{total_tx_count}_{start_date or 'ALL'}_{end_date or 'ALL'}"
+    
+    if suspect.analysis_signature == current_signature and suspect.ai_analysis:
+        return {"analysis": suspect.ai_analysis}
+
+    # 1. Fetch Top 10 Counterparties
+    cp_query = db.query(
+        models.Transaction.counterparty, 
+        func.sum(models.Transaction.amount).label("total")
+    ).filter(models.Transaction.suspect_id == suspect_id)
+    
+    if start_date:
+        cp_query = cp_query.filter(models.Transaction.transaction_time >= datetime.strptime(start_date, "%Y-%m-%d"))
+    if end_date:
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+        cp_query = cp_query.filter(models.Transaction.transaction_time < end_dt)
+        
+    top_cps = cp_query.group_by(models.Transaction.counterparty)\
+        .order_by(func.sum(models.Transaction.amount).desc())\
+        .limit(10).all()
+    
+    if not top_cps:
+        return {"analysis": "暂无足够交易数据进行分析。"}
+
+    top_cps_str = ", ".join([f"{name}({amount:.2f})" for name, amount in top_cps])
+
+    # 2. Day vs Night Stats
+    def get_period_stats(time_range):
+        q = db.query(
+            models.Transaction.category,
+            func.sum(models.Transaction.amount)
+        ).filter(models.Transaction.suspect_id == suspect_id)
+        
+        if start_date:
+            q = q.filter(models.Transaction.transaction_time >= datetime.strptime(start_date, "%Y-%m-%d"))
+        if end_date:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            q = q.filter(models.Transaction.transaction_time < end_dt)
+            
+        if time_range == "day":
+            q = q.filter(func.strftime("%H", models.Transaction.transaction_time) >= "06")
+            q = q.filter(func.strftime("%H", models.Transaction.transaction_time) <= "17")
+        elif time_range == "night":
+            q = q.filter(
+                (func.strftime("%H", models.Transaction.transaction_time) >= "18") | 
+                (func.strftime("%H", models.Transaction.transaction_time) <= "05")
+            )
+            
+        res = q.group_by(models.Transaction.category).all()
+        income = 0
+        expense = 0
+        for cat, amt in res:
+            if cat == "收入": income = amt
+            elif cat == "支出": expense = amt
+        return income, expense
+
+    day_inc, day_exp = get_period_stats("day")
+    night_inc, night_exp = get_period_stats("night")
+
+    # 3. Call Ollama
+    prompt = f"""
+    作为一名金融分析专家，请根据以下嫌疑人的交易数据进行简要分析，指出可能的可疑点。
+    
+    【数据概览】
+    - 交易对象TOP10：{top_cps_str}
+    - 交易时间分析：
+      - 日间(06:00-18:00)总收入：{day_inc:.2f}，总支出：{day_exp:.2f}
+      - 夜间(18:00-06:00)总收入：{night_inc:.2f}，总支出：{night_exp:.2f}
+    
+    请用简练、犀利的口吻（类似于侦探或审计专家），以气泡发言的形式，简短地（100字以内）给出你的核心点评和风险提示。关注夜间大额交易或频繁交易、以及异常的交易对象。
+    """
+    
+    try:
+        ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        
+        # Ensure scheme is present
+        if not ollama_host.startswith("http://") and not ollama_host.startswith("https://"):
+            ollama_host = "http://" + ollama_host
+            
+        # Fix for Windows: cannot connect to 0.0.0.0 directly
+        if "0.0.0.0" in ollama_host:
+            ollama_host = ollama_host.replace("0.0.0.0", "127.0.0.1")
+            
+        ollama_url = f"{ollama_host}/api/generate"
+        
+        payload = {
+            "model": "qwen3:1.7b",
+            "prompt": prompt,
+            "stream": False
+        }
+        resp = requests.post(ollama_url, json=payload, timeout=50)
+        if resp.status_code == 200:
+            raw_response = resp.json().get("response", "AI 分析服务暂无响应")
+            
+            # Clean <think> tags
+            cleaned_response = re.sub(r'<think>.*?</think>', '', raw_response, flags=re.DOTALL).strip()
+            
+            # Save to cache
+            suspect.ai_analysis = cleaned_response
+            suspect.analysis_signature = current_signature
+            db.commit()
+            
+            return {"analysis": cleaned_response}
+        else:
+            print(f"Ollama Error: {resp.text}")
+            return {"analysis": f"AI 服务响应错误: {resp.status_code}"}
+    except Exception as e:
+        print(f"Ollama Exception: {e}")
+        return {"analysis": f"AI 分析连接失败: {str(e)}"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8180, reload=True)

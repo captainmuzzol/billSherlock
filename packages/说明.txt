@@ -1,0 +1,7 @@
+# 离线安装说明
+
+1. 将整个 packages 文件夹和 requirements.txt 文件复制到离线环境的同一目录下。
+2. 在该目录下打开终端（PowerShell 或 CMD）。
+3. 运行以下命令进行安装：
+
+pip install --no-index --find-links=./packages -r requirements.txt

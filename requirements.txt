@@ -5,3 +5,5 @@ pandas
 sqlalchemy
 python-multipart
 aiofiles
+requests
+openpyxl
