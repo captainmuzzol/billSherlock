@@ -22,7 +22,9 @@ pack/
 uploads/
 *.log
 bill_app.db
-测试用账单
+测试用账单/
+packages/
+
 # Run_modules
 node_modules
 
