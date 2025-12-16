@@ -10,8 +10,10 @@ def parse_bill_file(file_path):
         return parse_pdf_bill(file_path)
     elif ext in ['.xlsx', '.xls']:
         return parse_excel_bill(file_path)
+    elif ext in ['.jpg', '.jpeg', '.png', '.bmp', '.gif']:
+        raise ValueError("不支持纯图片格式的账单。系统无法识别图片内容，请上传 PDF 或 Excel 电子账单。")
     else:
-        raise ValueError(f"Unsupported file format: {ext}")
+        raise ValueError(f"不支持的文件格式: {ext}")
 
 def clean_str(val):
     if val is None:
@@ -58,6 +60,12 @@ def parse_pdf_bill(file_path):
     transactions = []
     
     with pdfplumber.open(file_path) as pdf:
+        if len(pdf.pages) > 0:
+            # Check if the PDF is scanned (image-only)
+            first_page_text = pdf.pages[0].extract_text()
+            if not first_page_text or len(first_page_text.strip()) < 10:
+                raise ValueError("检测到扫描件或纯图片 PDF，系统无法提取文本。请使用 OCR 工具转换为可编辑 PDF 或 Excel 后再上传。")
+
         for page in pdf.pages:
             tables = page.extract_tables()
             if not tables:
@@ -163,14 +171,22 @@ def parse_excel_bill(file_path):
     
     for i, row in df.iterrows():
         row_values = [str(x).strip() for x in row.values if pd.notna(x)]
+        row_str = " ".join(row_values).replace('\n', '')
         
         # Alipay Excel Signature
-        if "收/支" in row_values and "交易订单号" in row_values: # Note: '交易订单\n号' might be stripped
+        if "收/支" in row_values and "交易订单号" in row_values: 
             header_index = i
             bill_type = "alipay"
             break
+        
+        # WeChat Excel Signature (Common in CSV-to-Excel conversions)
+        # Columns: 交易时间, 交易类型, 交易对方, 商品, 收/支, 金额(元), 支付方式, ...
+        if "交易时间" in row_values and "交易类型" in row_values and ("金额(元)" in row_values or "金额" in row_values):
+            header_index = i
+            bill_type = "wechat"
+            break
+            
         # Check for newline variants just in case
-        row_str = " ".join(row_values).replace('\n', '')
         if "收/支" in row_str and "交易订单号" in row_str:
             header_index = i
             bill_type = "alipay"
@@ -213,6 +229,41 @@ def parse_excel_bill(file_path):
                     "counterparty": clean_str(row.get('交易对方')),
                     "merchant_id": clean_id(row.get('商家订单号'))
                 }
+                transactions.append(transaction)
+
+            elif bill_type == "wechat":
+                # WeChat Excel mapping:
+                # 交易时间, 交易类型, 交易对方, 商品, 收/支, 金额(元), 支付方式, 当前状态, 交易单号, 商户单号, 备注
+                
+                # Handle "金额(元)" vs "金额"
+                amount_col = "金额(元)" if "金额(元)" in headers else "金额"
+                
+                if pd.isna(row.get('交易单号')) or pd.isna(row.get('交易时间')):
+                    continue
+
+                tid = clean_id(row.get('交易单号'))
+                # Skip footer rows
+                if not tid or not tid[0].isdigit(): # WeChat IDs are numeric-ish (sometimes start with 420...)
+                     # Check if it's a valid ID. WeChat IDs are long numbers.
+                     # Sometimes header repetition or footer summary
+                     if len(tid) < 5: continue
+                
+                transaction = {
+                    "transaction_id": tid,
+                    "transaction_time": parse_datetime(row.get('交易时间')),
+                    "transaction_type": clean_str(row.get('交易类型')),
+                    "category": clean_str(row.get('收/支')),
+                    "method": clean_str(row.get('支付方式')),
+                    "amount": parse_amount(row.get(amount_col)),
+                    "counterparty": clean_str(row.get('交易对方')),
+                    "merchant_id": clean_id(row.get('商户单号'))
+                }
+                
+                # Normalize category for WeChat (sometimes they have different terms?)
+                # Usually "收入", "支出", or "/"
+                if transaction['category'] == '/':
+                    transaction['category'] = '其他'
+                
                 transactions.append(transaction)
                 
         except Exception as e:

@@ -1,1 +1,0 @@
-AI 分析连接失败: HTTPConnectionPool(host='0.0.0.0', port=11434): Max retries exceeded with url: /api/generate (Caused by NewConnectionError("HTTPConnection(host='0.0.0.0', port=11434): Failed to establish a new connection: [WinError 10049] 在其上下文中，该请求的地址无效。"))
