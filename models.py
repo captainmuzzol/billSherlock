@@ -14,6 +14,10 @@ class Suspect(Base):
     # AI Analysis Cache
     ai_analysis = Column(String, nullable=True)
     analysis_signature = Column(String, nullable=True)
+
+    # Local Forensics Report Path
+    report_path = Column(String, nullable=True)
+    report_filename = Column(String, nullable=True)
     
     transactions = relationship("Transaction", back_populates="suspect")
 

@@ -39,6 +39,7 @@ REPORT_CONTEXT = {
 
 # Pydantic Models
 class ReportPathRequest(BaseModel):
+    suspect_id: int
     file_path: Optional[str] = None
     search_name: Optional[str] = None
 
@@ -56,6 +57,8 @@ class SuspectRead(BaseModel):
     created_at: datetime
     file_count: int = 0
     last_update: Optional[datetime] = None
+    report_path: Optional[str] = None
+    report_filename: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -102,7 +105,9 @@ def read_suspects(search: Optional[str] = None, db: Session = Depends(database.g
             "name": s.name,
             "created_at": s.created_at,
             "file_count": file_count,
-            "last_update": last_tx.transaction_time if last_tx else s.created_at
+            "last_update": last_tx.transaction_time if last_tx else s.created_at,
+            "report_path": s.report_path,
+            "report_filename": s.report_filename
         })
     return results
 
@@ -190,6 +195,38 @@ def delete_suspect_file(suspect_id: int, filename: str, db: Session = Depends(da
     db.commit()
     return {"message": f"Deleted {result} transactions from {filename}"}
 
+def parse_filter_time(time_str: str, is_end_of_range: bool = False):
+    if not time_str:
+        return None
+    try:
+        # Try full datetime
+        dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+        if is_end_of_range:
+            return dt + timedelta(seconds=1)
+        return dt
+    except ValueError:
+        pass
+
+    try:
+        # Try datetime without seconds
+        dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+        if is_end_of_range:
+            return dt + timedelta(minutes=1)
+        return dt
+    except ValueError:
+        pass
+        
+    try:
+        # Try date only
+        dt = datetime.strptime(time_str, "%Y-%m-%d")
+        if is_end_of_range:
+            return dt + timedelta(days=1)
+        return dt
+    except ValueError:
+        pass
+        
+    return None
+
 @app.get("/transactions")
 def get_transactions(
     skip: int = 0, 
@@ -211,11 +248,13 @@ def get_transactions(
         query = query.filter(models.Transaction.suspect_id == suspect_id)
     
     if start_date:
-        query = query.filter(models.Transaction.transaction_time >= datetime.strptime(start_date, "%Y-%m-%d"))
+        dt = parse_filter_time(start_date)
+        if dt:
+            query = query.filter(models.Transaction.transaction_time >= dt)
     if end_date:
-        # Make end_date inclusive by moving to the next day and using <
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-        query = query.filter(models.Transaction.transaction_time < end_dt)
+        dt = parse_filter_time(end_date, is_end_of_range=True)
+        if dt:
+            query = query.filter(models.Transaction.transaction_time < dt)
     if counterparty:
         # Support multiple counterparties separated by comma (Chinese or English)
         keywords = counterparty.replace("，", ",").split(",")
@@ -258,10 +297,13 @@ def get_summary(
         query = query.filter(models.Transaction.suspect_id == suspect_id)
     
     if start_date:
-        query = query.filter(models.Transaction.transaction_time >= datetime.strptime(start_date, "%Y-%m-%d"))
+        dt = parse_filter_time(start_date)
+        if dt:
+            query = query.filter(models.Transaction.transaction_time >= dt)
     if end_date:
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-        query = query.filter(models.Transaction.transaction_time < end_dt)
+        dt = parse_filter_time(end_date, is_end_of_range=True)
+        if dt:
+            query = query.filter(models.Transaction.transaction_time < dt)
     if specific_amount is not None:
         query = query.filter(models.Transaction.amount == specific_amount)
     
@@ -310,10 +352,13 @@ def get_stats_by_counterparty(
         pass
 
     if start_date:
-        query = query.filter(models.Transaction.transaction_time >= datetime.strptime(start_date, "%Y-%m-%d"))
+        dt = parse_filter_time(start_date)
+        if dt:
+            query = query.filter(models.Transaction.transaction_time >= dt)
     if end_date:
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-        query = query.filter(models.Transaction.transaction_time < end_dt)
+        dt = parse_filter_time(end_date, is_end_of_range=True)
+        if dt:
+            query = query.filter(models.Transaction.transaction_time < dt)
     if specific_amount is not None:
         query = query.filter(models.Transaction.amount == specific_amount)
         
@@ -351,10 +396,13 @@ def get_stats_by_date(
         query = query.filter(models.Transaction.suspect_id == suspect_id)
 
     if start_date:
-        query = query.filter(models.Transaction.transaction_time >= datetime.strptime(start_date, "%Y-%m-%d"))
+        dt = parse_filter_time(start_date)
+        if dt:
+            query = query.filter(models.Transaction.transaction_time >= dt)
     if end_date:
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-        query = query.filter(models.Transaction.transaction_time < end_dt)
+        dt = parse_filter_time(end_date, is_end_of_range=True)
+        if dt:
+            query = query.filter(models.Transaction.transaction_time < dt)
     if specific_amount is not None:
         query = query.filter(models.Transaction.amount == specific_amount)
 
@@ -537,52 +585,33 @@ async def get_ai_analysis(
         return {"analysis": result["error"]}
 
 @app.post("/api/set_report_path")
-def set_report_path(request: ReportPathRequest):
+def set_report_path(request: ReportPathRequest, db: Session = Depends(database.get_db)):
+    # Find suspect
+    suspect = db.query(models.Suspect).filter(models.Suspect.id == request.suspect_id).first()
+    if not suspect:
+        raise HTTPException(status_code=404, detail="Suspect not found")
+
     path = None
     
-    # Mode 1: Search by name (Drag & Drop)
-    if request.search_name:
-        search_roots = ['.'] # Search current directory
-        found_path = None
-        
-        # Helper to find file/dir
-        for root_dir in search_roots:
-            if found_path: break
-            # Walk with depth limit
-            for root, dirs, files in os.walk(root_dir):
-                # Calculate depth
-                depth = root[len(root_dir):].count(os.sep)
-                if depth > 3: # Limit depth
-                    # Don't recurse further
-                    dirs[:] = []
-                    continue
-                
-                # Check directories
-                if request.search_name in dirs:
-                    found_path = os.path.join(root, request.search_name)
-                    break
-                
-                # Check files
-                if request.search_name in files:
-                    found_path = os.path.join(root, request.search_name)
-                    break
-        
-        if found_path:
-            path = os.path.abspath(found_path)
-        else:
-             raise HTTPException(status_code=404, detail=f"在服务器目录中未找到: {request.search_name}，请尝试手动输入完整路径")
-             
-    # Mode 2: Direct path
-    elif request.file_path:
+    # Priority: Direct path
+    if request.file_path:
         path = request.file_path.strip()
         # Remove quotes if user copied as path
         if (path.startswith('"') and path.endswith('"')) or (path.startswith("'") and path.endswith("'")):
             path = path[1:-1]
-    else:
-        raise HTTPException(status_code=400, detail="Missing file_path or search_name")
+    
+    # Fallback: Search by name (Deprecated, but kept for compatibility if needed, though user advised against it)
+    # logic removed as per user instruction "search is wrong"
+            
+    if not path:
+        raise HTTPException(status_code=400, detail="请提供有效的本地绝对路径")
 
     if not os.path.exists(path):
-         raise HTTPException(status_code=400, detail="路径不存在")
+         raise HTTPException(status_code=400, detail="路径不存在 (请确保服务器有权限访问该路径)")
+    
+    # Determine main file
+    main_file = None
+    root_dir = path
     
     if os.path.isdir(path):
         # Try to find main html file
@@ -591,7 +620,6 @@ def set_report_path(request: ReportPathRequest):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"无法读取目录: {str(e)}")
 
-        main_file = None
         # Priority 1: Contains "取证分析报告"
         for f in candidates:
             if "取证分析报告" in f:
@@ -605,24 +633,38 @@ def set_report_path(request: ReportPathRequest):
             main_file = candidates[0]
             
         if not main_file:
-            raise HTTPException(status_code=400, detail="该目录下未找到 HTML 报告文件")
-            
-        REPORT_CONTEXT["root_dir"] = path
-        REPORT_CONTEXT["main_file"] = main_file
+             raise HTTPException(status_code=400, detail="该目录下未找到 HTML 报告文件")
     else:
-        REPORT_CONTEXT["root_dir"] = os.path.dirname(path)
-        REPORT_CONTEXT["main_file"] = os.path.basename(path)
+        root_dir = os.path.dirname(path)
+        main_file = os.path.basename(path)
     
-    return {"status": "ok", "filename": REPORT_CONTEXT["main_file"]}
+    # Save to DB
+    suspect.report_path = path
+    suspect.report_filename = main_file
+    db.commit()
+    
+    return {"status": "ok", "filename": main_file, "full_path": path}
 
-@app.get("/report_proxy/{file_path:path}")
-def report_proxy(file_path: str):
-    if not REPORT_CONTEXT["root_dir"]:
-        raise HTTPException(status_code=400, detail="Report path not set")
+@app.get("/report_proxy/{suspect_id}/{file_path:path}")
+def report_proxy(suspect_id: int, file_path: str, db: Session = Depends(database.get_db)):
+    suspect = db.query(models.Suspect).filter(models.Suspect.id == suspect_id).first()
+    if not suspect or not suspect.report_path:
+        raise HTTPException(status_code=404, detail="Report path not set for this suspect")
     
+    path = suspect.report_path
+    
+    # Determine root and main file (re-logic from set_report_path, or assume set_report_path stored a valid path)
+    if os.path.isdir(path):
+         root_dir = path
+         # We assume the main file is not needed for proxying assets, but if file_path is empty/index, we might need it.
+         # But the frontend usually requests specific files.
+         # However, if file_path is just the filename of the main report...
+    else:
+         root_dir = os.path.dirname(path)
+         
     # Security check
-    full_path = os.path.abspath(os.path.join(REPORT_CONTEXT["root_dir"], file_path))
-    if not full_path.startswith(os.path.abspath(REPORT_CONTEXT["root_dir"])):
+    full_path = os.path.abspath(os.path.join(root_dir, file_path))
+    if not full_path.startswith(os.path.abspath(root_dir)):
          raise HTTPException(status_code=403, detail="Access denied")
     
     if not os.path.exists(full_path):
@@ -641,7 +683,7 @@ def report_proxy(file_path: str):
                 content = f.read()
                 
             # Injection script
-            script = """
+            script = r"""
             <script>
             (function() {
                 // BillExtra Investigation Bridge
@@ -658,14 +700,22 @@ def report_proxy(file_path: str):
                     let container = target.closest('.m-message') || target.closest('tr') || target.closest('.contentitem');
                     
                     if (container) {
-                       // Find any time string inside this container
+                       // Find ALL time strings inside this container
                        // Regex for date time: YYYY-MM-DD HH:MM:SS
-                       const timeRegex = /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/;
-                       const match = container.innerText.match(timeRegex);
+                       const timeRegex = /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/g;
+                       const matches = container.innerText.match(timeRegex);
                        
-                       if (match) {
-                           console.log("Sending time:", match[0]);
-                           channel.postMessage({type: 'time_sync', time: match[0]});
+                       if (matches && matches.length > 0) {
+                           matches.sort();
+                           const startTime = matches[0];
+                           const endTime = matches[matches.length - 1];
+
+                           console.log("Sending time range:", startTime, "-", endTime);
+                           channel.postMessage({
+                               type: 'time_sync', 
+                               start_time: startTime,
+                               end_time: endTime
+                           });
                            
                            // Visual feedback
                            let originalBg = container.style.backgroundColor;
@@ -697,10 +747,89 @@ def report_proxy(file_path: str):
                 
             return HTMLResponse(content=content)
         except Exception as e:
-             print(f"Error reading HTML {full_path}: {e}")
+             # Fallback if encoding fails
              return FileResponse(full_path)
+             
+    return FileResponse(full_path)
+
+# --- Filesystem API for Browser ---
+
+@app.get("/api/fs/drives")
+def list_drives():
+    """List available drives (Windows) or root (Linux/Mac)"""
+    drives = []
+    if os.name == 'nt':
+        import string
+        from ctypes import windll
+        bitmask = windll.kernel32.GetLogicalDrives()
+        for letter in string.ascii_uppercase:
+            if bitmask & 1:
+                drives.append(f"{letter}:\\")
+            bitmask >>= 1
     else:
-        return FileResponse(full_path)
+        drives.append("/")
+    return drives
+
+@app.get("/api/fs/shortcuts")
+def list_shortcuts():
+    """List common shortcuts (Desktop, Downloads)"""
+    shortcuts = []
+    home = os.path.expanduser("~")
+    
+    # Common candidate names for Desktop and Downloads
+    desktop_names = ["Desktop", "桌面"]
+    download_names = ["Downloads", "下载"]
+    
+    # Find Desktop
+    for name in desktop_names:
+        path = os.path.join(home, name)
+        if os.path.exists(path) and os.path.isdir(path):
+            shortcuts.append({"name": "桌面 (Desktop)", "path": path})
+            break
+            
+    # Find Downloads
+    for name in download_names:
+        path = os.path.join(home, name)
+        if os.path.exists(path) and os.path.isdir(path):
+            shortcuts.append({"name": "下载 (Downloads)", "path": path})
+            break
+            
+    # Add Home as well
+    shortcuts.append({"name": "用户主目录 (Home)", "path": home})
+    
+    return shortcuts
+
+@app.post("/api/fs/list")
+def list_directory(path: str = Form(...)):
+    """List contents of a directory"""
+    if not os.path.exists(path):
+         raise HTTPException(status_code=404, detail="Directory not found")
+    if not os.path.isdir(path):
+         raise HTTPException(status_code=400, detail="Not a directory")
+         
+    items = []
+    try:
+        with os.scandir(path) as it:
+            for entry in it:
+                try:
+                    is_dir = entry.is_dir()
+                    # Filter: Only show directories or HTML files (potential reports)
+                    if is_dir or entry.name.lower().endswith('.html'):
+                        items.append({
+                            "name": entry.name,
+                            "path": entry.path,
+                            "is_dir": is_dir
+                        })
+                except PermissionError:
+                    continue
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
+    # Sort: Directories first, then files
+    items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
+    return items
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8180, reload=True)
