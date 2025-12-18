@@ -1,0 +1,20 @@
+{
+  "status": "done",
+  "suspect_id": 6,
+  "created_at": "2025-12-18T16:52:30",
+  "updated_at": "2025-12-18T16:54:09",
+  "total_files": 1,
+  "current_file_index": 1,
+  "current_filename": "微信支付交易明细证明(20240601-20250220)——【解压密码可在微信支付公众号查看】(1).pdf",
+  "results": [
+    {
+      "filename": "微信支付交易明细证明(20240601-20250220)——【解压密码可在微信支付公众号查看】(1).pdf",
+      "parsed_count": 33251,
+      "inserted_count": 33251,
+      "min_time": "2024-06-01T07:34:30",
+      "max_time": "2025-02-20T21:32:15",
+      "distinct_days": 265,
+      "diagnostics_file": null
+    }
+  ]
+}

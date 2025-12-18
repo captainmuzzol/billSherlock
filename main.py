@@ -18,6 +18,7 @@ import zipfile
 import json
 import threading
 import aiofiles
+import tempfile
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 
@@ -54,6 +55,25 @@ ARCHIVE_EXTRACT_TIMEOUT_SECONDS = int(os.getenv("ARCHIVE_EXTRACT_TIMEOUT_SECONDS
 REPORT_UPLOAD_JOBS: dict[str, dict] = {}
 REPORT_UPLOAD_JOBS_LOCK = threading.Lock()
 
+BILL_UPLOAD_SEMAPHORE = asyncio.Semaphore(int(os.getenv("BILL_UPLOAD_CONCURRENCY", "1")))
+BILL_UPLOAD_JOBS: dict[str, dict] = {}
+BILL_UPLOAD_JOBS_LOCK = threading.Lock()
+
+def _write_json_atomic(path: str, payload: dict):
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+    os.replace(tmp_path, path)
+
+def _write_bill_job_result(job_id: str, suspect_id: int, job: dict):
+    safe_job_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(job_id or ""))
+    safe_suspect_id = re.sub(r"[^0-9]", "", str(suspect_id or "0")) or "0"
+    filename = f"bill_upload_result_{safe_suspect_id}_{safe_job_id}.json"
+    path = os.path.abspath(os.path.join(os.getcwd(), filename))
+    _write_json_atomic(path, job or {})
+    return filename
+
 def _set_report_job(job_id: str, patch: dict):
     if not job_id:
         return
@@ -69,6 +89,172 @@ def _get_report_job(job_id: str):
         if not job:
             return None
         return dict(job)
+
+def _set_bill_job(job_id: str, patch: dict):
+    if not job_id:
+        return
+    with BILL_UPLOAD_JOBS_LOCK:
+        current = BILL_UPLOAD_JOBS.get(job_id) or {}
+        merged = dict(current)
+        merged.update(patch or {})
+        BILL_UPLOAD_JOBS[job_id] = merged
+
+def _get_bill_job(job_id: str):
+    with BILL_UPLOAD_JOBS_LOCK:
+        job = BILL_UPLOAD_JOBS.get(job_id)
+        if not job:
+            return None
+        return dict(job)
+
+def _chunk_list(items: list, size: int):
+    if size <= 0:
+        size = 1
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+def _insert_transactions_for_suspect(db: Session, suspect_id: int, source_filename: str, data: list[dict]):
+    tx_ids = []
+    for item in data:
+        tid = item.get("transaction_id") if isinstance(item, dict) else None
+        if tid:
+            tx_ids.append(str(tid))
+
+    unique_ids = list(dict.fromkeys(tx_ids))
+    existing: set[str] = set()
+    for chunk in _chunk_list(unique_ids, 900):
+        rows = (
+            db.query(models.Transaction.transaction_id)
+            .filter(models.Transaction.suspect_id == suspect_id, models.Transaction.transaction_id.in_(chunk))
+            .all()
+        )
+        for r in rows:
+            if r and r[0]:
+                existing.add(str(r[0]))
+
+    to_insert = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        tid = item.get("transaction_id")
+        if not tid:
+            continue
+        if str(tid) in existing:
+            continue
+        to_insert.append(models.Transaction(**item, source_file=source_filename, suspect_id=suspect_id))
+
+    if to_insert:
+        db.add_all(to_insert)
+    db.commit()
+    return len(to_insert)
+
+async def _process_bill_upload_job(job_id: str, suspect_id: int, stored_files: list[dict], job_dir: str):
+    _set_bill_job(job_id, {"status": "queued", "updated_at": datetime.now().isoformat(timespec="seconds")})
+    await BILL_UPLOAD_SEMAPHORE.acquire()
+    try:
+        _set_bill_job(job_id, {"status": "processing", "updated_at": datetime.now().isoformat(timespec="seconds")})
+        db = database.SessionLocal()
+        try:
+            suspect = db.query(models.Suspect).filter(models.Suspect.id == suspect_id).first()
+            if not suspect:
+                _set_bill_job(job_id, {"status": "error", "detail": "Suspect not found", "updated_at": datetime.now().isoformat(timespec="seconds")})
+                return
+
+            results = []
+            total_files = len(stored_files or [])
+            for idx, f in enumerate(stored_files or []):
+                filename = (f.get("filename") or "").strip() if isinstance(f, dict) else ""
+                fpath = (f.get("path") or "").strip() if isinstance(f, dict) else ""
+                _set_bill_job(
+                    job_id,
+                    {
+                        "current_filename": filename,
+                        "current_file_index": idx + 1,
+                        "total_files": total_files,
+                        "updated_at": datetime.now().isoformat(timespec="seconds"),
+                    },
+                )
+
+                try:
+                    data = await asyncio.to_thread(parser.parse_bill_file, fpath)
+                    times = []
+                    for item in data or []:
+                        if isinstance(item, dict):
+                            t = item.get("transaction_time")
+                            if t:
+                                times.append(t)
+                    min_time = min(times) if times else None
+                    max_time = max(times) if times else None
+                    distinct_days = set()
+                    for t in times:
+                        try:
+                            distinct_days.add(t.date().isoformat())
+                        except Exception:
+                            continue
+                    inserted = _insert_transactions_for_suspect(db, suspect_id, filename, data or [])
+                    diag_file = None
+                    try:
+                        lower = filename.lower()
+                        if lower.endswith(".pdf") and len(data or []) <= 50:
+                            diag = await asyncio.to_thread(parser.inspect_pdf_sample, fpath)
+                            diag_name = f"bill_upload_diag_{suspect_id}_{job_id}.json"
+                            diag_path = os.path.abspath(os.path.join(os.getcwd(), diag_name))
+                            await asyncio.to_thread(_write_json_atomic, diag_path, diag)
+                            diag_file = diag_name
+                    except Exception:
+                        diag_file = None
+                    results.append(
+                        {
+                            "filename": filename,
+                            "parsed_count": len(data or []),
+                            "inserted_count": inserted,
+                            "min_time": min_time.isoformat(timespec="seconds") if min_time else None,
+                            "max_time": max_time.isoformat(timespec="seconds") if max_time else None,
+                            "distinct_days": len(distinct_days),
+                            "diagnostics_file": diag_file,
+                        }
+                    )
+                except Exception as e:
+                    db.rollback()
+                    results.append({"filename": filename, "error": str(e)})
+                finally:
+                    try:
+                        if fpath and os.path.exists(fpath):
+                            os.remove(fpath)
+                    except Exception:
+                        pass
+
+                _set_bill_job(job_id, {"results": list(results), "updated_at": datetime.now().isoformat(timespec="seconds")})
+
+            _set_bill_job(
+                job_id,
+                {
+                    "status": "done",
+                    "results": list(results),
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                },
+            )
+            try:
+                final_job = _get_bill_job(job_id) or {}
+                out_file = _write_bill_job_result(job_id, suspect_id, final_job)
+                _set_bill_job(job_id, {"output_file": out_file, "updated_at": datetime.now().isoformat(timespec="seconds")})
+            except Exception:
+                pass
+        finally:
+            db.close()
+    except Exception as e:
+        _set_bill_job(job_id, {"status": "error", "detail": str(e), "updated_at": datetime.now().isoformat(timespec="seconds")})
+        try:
+            final_job = _get_bill_job(job_id) or {}
+            out_file = _write_bill_job_result(job_id, suspect_id, final_job)
+            _set_bill_job(job_id, {"output_file": out_file, "updated_at": datetime.now().isoformat(timespec="seconds")})
+        except Exception:
+            pass
+    finally:
+        BILL_UPLOAD_SEMAPHORE.release()
+        try:
+            await asyncio.to_thread(_delete_tree, job_dir)
+        except Exception:
+            pass
 
 def _load_report_access_unlocked():
     if not os.path.exists(REPORT_ACCESS_LOG_PATH):
@@ -477,47 +663,57 @@ def read_suspects(search: Optional[str] = None, db: Session = Depends(database.g
     return results
 
 @app.post("/upload")
-def upload_file(
+async def upload_file(
     suspect_id: int = Form(...),
-    files: List[UploadFile] = File(...), 
-    db: Session = Depends(database.get_db)
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(database.get_db),
 ):
     suspect = db.query(models.Suspect).filter(models.Suspect.id == suspect_id).first()
     if not suspect:
         raise HTTPException(status_code=404, detail="Suspect not found")
-        
-    results = []
-    for file in files:
-        file_location = f"temp_{file.filename}"
-        with open(file_location, "wb+") as file_object:
-            shutil.copyfileobj(file.file, file_object)
-        
-        try:
-            data = parser.parse_bill_file(file_location)
-            
-            # Save to DB
-            count = 0
-            for item in data:
-                # Check duplicates for this suspect
-                exists = db.query(models.Transaction).filter(
-                    models.Transaction.transaction_id == item['transaction_id'],
-                    models.Transaction.suspect_id == suspect_id
-                ).first()
-                
-                if not exists:
-                    db_item = models.Transaction(**item, source_file=file.filename, suspect_id=suspect_id)
-                    db.add(db_item)
-                    count += 1
-            
-            db.commit()
-            results.append({"filename": file.filename, "parsed_count": len(data), "inserted_count": count})
-        except Exception as e:
-            results.append({"filename": file.filename, "error": str(e)})
-        finally:
-            if os.path.exists(file_location):
-                os.remove(file_location)
-                
-    return results
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+
+    job_id = uuid.uuid4().hex
+    job_dir = tempfile.mkdtemp(prefix=f"bill_upload_{suspect_id}_{job_id}_")
+    stored_files = []
+
+    for f in files:
+        filename = os.path.basename((f.filename or "").strip()) or "upload"
+        file_path = os.path.join(job_dir, filename)
+
+        async with aiofiles.open(file_path, "wb") as out:
+            while True:
+                chunk = await f.read(1024 * 1024)
+                if not chunk:
+                    break
+                await out.write(chunk)
+
+        stored_files.append({"filename": filename, "path": file_path})
+
+    _set_bill_job(
+        job_id,
+        {
+            "status": "queued",
+            "suspect_id": suspect_id,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "total_files": len(stored_files),
+            "current_file_index": 0,
+            "current_filename": None,
+            "results": [],
+        },
+    )
+    asyncio.create_task(_process_bill_upload_job(job_id, suspect_id, stored_files, job_dir))
+    return {"status": "accepted", "job_id": job_id}
+
+@app.get("/api/bill/upload_status")
+def bill_upload_status(job_id: str = Query(...)):
+    job = _get_bill_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
 
 @app.post("/suspects/verify")
 def verify_suspect_password(verify: SuspectVerify, db: Session = Depends(database.get_db)):
@@ -946,7 +1142,7 @@ async def get_ai_analysis(
         db.commit()
         return {"analysis": result["analysis"]}
     else:
-        return {"analysis": result["error"]}
+        raise HTTPException(status_code=503, detail=result["error"])
 
 def _safe_extract_zip(archive_path: str, dest_dir: str):
     with zipfile.ZipFile(archive_path, "r") as zf:

@@ -379,6 +379,11 @@
                                     <span class="text-red-600 text-sm">{{ uploadError }}</span>
                                 </div>
 
+                                <div v-if="uploading && uploadStatus"
+                                    class="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700">
+                                    {{ uploadStatus }}
+                                </div>
+
                                 <div v-if="uploadResult"
                                     class="mb-4 bg-green-50 border border-green-100 rounded-lg p-3 max-h-32 overflow-y-auto text-sm">
                                     <div v-for="(res, idx) in uploadResult" :key="idx"
@@ -411,7 +416,7 @@
                                             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
                                         </path>
                                     </svg>
-                                    {{ uploading ? '处理中...' : '保存档案' }}
+                                    {{ uploading ? (uploadStatus || '处理中...') : '保存档案' }}
                                 </button>
                             </div>
                         </div>
@@ -873,7 +878,7 @@
 
         <footer class="text-center text-xs text-gray-400 py-6 mt-8">
             <p class="inline-flex items-center gap-1">
-                <span>&copy; 2026 账单神探 - 许XX</span>
+                <span>&copy; 2026 账单神探 - 许钦滔</span>
                 <button @click="openAdminPage"
                     class="w-4 h-4 inline-flex items-center justify-center opacity-[0.03] hover:opacity-40 focus:opacity-40 transition-opacity"
                     title="管理">
@@ -1327,6 +1332,7 @@
                 const uploading = ref(false);
                 const uploadResult = ref(null);
                 const uploadError = ref(null);
+                const uploadStatus = ref('');
                 const dragOver = ref(false);
 
                 const filters = ref({
@@ -1350,6 +1356,7 @@
 
                 const aiAnalysis = ref('');
                 const loadingAi = ref(false);
+                let aiAnalysisRequestId = 0;
 
                 const isAllTime = ref(true);
 
@@ -1496,6 +1503,7 @@
                     modalMode.value = mode;
                     uploadResult.value = null;
                     uploadError.value = null;
+                    uploadStatus.value = '';
                     modalFiles.value = [];
 
                     if (mode === 'create') {
@@ -1619,6 +1627,7 @@
                     uploading.value = true;
                     uploadError.value = null;
                     uploadResult.value = null;
+                    uploadStatus.value = '';
 
                     try {
                         let suspectId = modalSuspectId.value;
@@ -1651,25 +1660,82 @@
 
                         // 2. Upload Files if any
                         if (modalFiles.value.length > 0) {
+                            const parseJsonResponse = async (res) => {
+                                const text = await res.text();
+                                let payload = null;
+                                try {
+                                    payload = text ? JSON.parse(text) : null;
+                                } catch (_) {
+                                    const snippet = (text || '').trim().slice(0, 200);
+                                    throw new Error(`服务器返回非 JSON（${res.status}）：${snippet || 'empty'}`);
+                                }
+
+                                if (!res.ok) {
+                                    const detail = (payload && (payload.detail || payload.message)) ? (payload.detail || payload.message) : `上传失败（${res.status}）`;
+                                    throw new Error(detail);
+                                }
+                                return payload;
+                            };
+
+                            const waitForBillJobDone = async (jobId) => {
+                                const startedAt = Date.now();
+                                while (true) {
+                                    const res = await fetch(`/api/bill/upload_status?job_id=${encodeURIComponent(jobId)}`);
+                                    const payload = await parseJsonResponse(res);
+                                    const status = payload && payload.status ? String(payload.status) : '';
+
+                                    if (status === 'queued') {
+                                        uploadStatus.value = '排队中（等待服务器处理）...';
+                                    } else if (status === 'processing') {
+                                        const idx = payload.current_file_index || 0;
+                                        const total = payload.total_files || 0;
+                                        const name = payload.current_filename ? String(payload.current_filename) : '';
+                                        uploadStatus.value = `服务器处理中（${idx}/${total}）${name ? '：' + name : ''}`;
+                                    } else if (status === 'done') {
+                                        return payload;
+                                    } else if (status === 'error') {
+                                        const detail = (payload && payload.detail) ? String(payload.detail) : '服务器处理失败';
+                                        throw new Error(detail);
+                                    } else {
+                                        uploadStatus.value = '服务器处理中...';
+                                    }
+
+                                    if (Date.now() - startedAt > 30 * 60 * 1000) {
+                                        throw new Error('服务器处理超时，请稍后重试');
+                                    }
+                                    await new Promise(r => setTimeout(r, 1000));
+                                }
+                            };
+
                             const formData = new FormData();
                             formData.append('suspect_id', suspectId);
                             modalFiles.value.forEach(file => {
                                 formData.append('files', file);
                             });
 
+                            uploadStatus.value = '上传中...';
                             const resUpload = await fetch('/upload', {
                                 method: 'POST',
                                 body: formData
                             });
 
-                            if (!resUpload.ok) {
-                                const err = await resUpload.json();
-                                throw new Error(err.detail || "上传失败");
+                            const data = await parseJsonResponse(resUpload);
+                            let final = data;
+                            if (data && data.status === 'accepted' && data.job_id) {
+                                uploadStatus.value = '服务器处理中...';
+                                final = await waitForBillJobDone(data.job_id);
+                            } else {
+                                uploadStatus.value = '';
                             }
-                            uploadResult.value = await resUpload.json();
+
+                            const results = Array.isArray(final) ? final : (final && Array.isArray(final.results) ? final.results : null);
+                            if (!results) {
+                                throw new Error('服务器返回格式异常');
+                            }
+                            uploadResult.value = results;
 
                             // Check for partial errors
-                            const hasError = uploadResult.value.some(r => r.error);
+                            const hasError = uploadResult.value.some(r => r && r.error);
                             if (!hasError) {
                                 modalFiles.value = [];
                                 await loadSuspects();
@@ -1694,6 +1760,7 @@
 
                     } catch (e) {
                         uploadError.value = e.message;
+                        uploadStatus.value = '';
                     } finally {
                         uploading.value = false;
                     }
@@ -1813,17 +1880,37 @@
                     // Call AI Analysis
                     if (!activeSuspect.value) return;
 
+                    const requestId = ++aiAnalysisRequestId;
+                    const previousAnalysis = aiAnalysis.value;
                     loadingAi.value = true;
-                    aiAnalysis.value = '';
                     try {
                         const url = `/stats/ai-analysis${queryString ? queryString + '&' : '?'}suspect_id=${activeSuspect.value.id}`;
                         const resAi = await fetch(url);
-                        const dataAi = await resAi.json();
-                        aiAnalysis.value = dataAi.analysis;
+                        const text = await resAi.text();
+                        let dataAi = null;
+                        try {
+                            dataAi = text ? JSON.parse(text) : null;
+                        } catch (_) {
+                            const snippet = (text || '').trim().slice(0, 200);
+                            throw new Error(`服务器返回非 JSON（${resAi.status}）：${snippet || 'empty'}`);
+                        }
+
+                        if (!resAi.ok) {
+                            const detail = (dataAi && (dataAi.detail || dataAi.message)) ? (dataAi.detail || dataAi.message) : `AI 分析失败（${resAi.status}）`;
+                            throw new Error(detail);
+                        }
+
+                        if (requestId === aiAnalysisRequestId) {
+                            aiAnalysis.value = dataAi && typeof dataAi.analysis === 'string' ? dataAi.analysis : '';
+                        }
                     } catch (e) {
-                        aiAnalysis.value = "AI 分析加载失败";
+                        if (requestId === aiAnalysisRequestId) {
+                            aiAnalysis.value = previousAnalysis || "AI 分析加载失败";
+                        }
                     } finally {
-                        loadingAi.value = false;
+                        if (requestId === aiAnalysisRequestId) {
+                            loadingAi.value = false;
+                        }
                     }
                 };
 
@@ -2403,6 +2490,7 @@
                     uploading,
                     uploadResult,
                     uploadError,
+                    uploadStatus,
                     summary,
                     transactions,
                     totalTransactions,
