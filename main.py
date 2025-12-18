@@ -17,6 +17,7 @@ import uuid
 import zipfile
 import json
 import threading
+import aiofiles
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 
@@ -48,6 +49,26 @@ os.makedirs(REPORTS_DIR, exist_ok=True)
 REPORT_UPLOAD_SEMAPHORE = asyncio.Semaphore(2)
 REPORT_ACCESS_LOG_PATH = os.path.join(REPORTS_DIR, "report_access.json")
 REPORT_ACCESS_LOCK = threading.Lock()
+ARCHIVE_EXTRACT_TIMEOUT_SECONDS = int(os.getenv("ARCHIVE_EXTRACT_TIMEOUT_SECONDS", "500"))
+
+REPORT_UPLOAD_JOBS: dict[str, dict] = {}
+REPORT_UPLOAD_JOBS_LOCK = threading.Lock()
+
+def _set_report_job(job_id: str, patch: dict):
+    if not job_id:
+        return
+    with REPORT_UPLOAD_JOBS_LOCK:
+        current = REPORT_UPLOAD_JOBS.get(job_id) or {}
+        merged = dict(current)
+        merged.update(patch or {})
+        REPORT_UPLOAD_JOBS[job_id] = merged
+
+def _get_report_job(job_id: str):
+    with REPORT_UPLOAD_JOBS_LOCK:
+        job = REPORT_UPLOAD_JOBS.get(job_id)
+        if not job:
+            return None
+        return dict(job)
 
 def _load_report_access_unlocked():
     if not os.path.exists(REPORT_ACCESS_LOG_PATH):
@@ -935,6 +956,34 @@ def _safe_extract_zip(archive_path: str, dest_dir: str):
                 raise HTTPException(status_code=400, detail="压缩包内容不合法")
         zf.extractall(dest_dir)
 
+def _find_rar_extract_tool():
+    preferred = []
+    bz = shutil.which("bz") or shutil.which("bz.exe")
+    if bz:
+        preferred.append(("bz", bz))
+
+    seven_zip = shutil.which("7z") or shutil.which("7za")
+    if seven_zip:
+        preferred.append(("7z", seven_zip))
+
+    unrar = shutil.which("unrar")
+    if unrar:
+        preferred.append(("unrar", unrar))
+
+    if preferred:
+        return preferred[0]
+
+    if os.name == "nt":
+        candidates = [
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Bandizip", "bz.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Bandizip", "bz.exe"),
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return ("bz", p)
+
+    return (None, None)
+
 def _extract_archive(archive_path: str, dest_dir: str):
     os.makedirs(dest_dir, exist_ok=True)
     if zipfile.is_zipfile(archive_path):
@@ -943,17 +992,31 @@ def _extract_archive(archive_path: str, dest_dir: str):
 
     lower = archive_path.lower()
     if lower.endswith(".rar"):
-        tool = shutil.which("7z") or shutil.which("7za") or shutil.which("unrar")
+        kind, tool = _find_rar_extract_tool()
         if not tool:
-            raise HTTPException(status_code=400, detail="服务器缺少解压工具，请上传 zip 格式压缩包")
+            raise HTTPException(
+                status_code=400,
+                detail="服务器缺少解压工具（7z/unrar/bz.exe），请安装 7-Zip 或将 Bandizip 安装目录加入 PATH（确保可直接运行 bz.exe），或上传 zip 格式压缩包",
+            )
 
-        if os.path.basename(tool).lower().startswith("unrar"):
+        if kind == "unrar" or os.path.basename(tool).lower().startswith("unrar"):
             cmd = [tool, "x", "-y", archive_path, dest_dir]
+        elif kind == "bz" or os.path.basename(tool).lower() in {"bz.exe", "bz"}:
+            cmd = [tool, "x", "-y", "-aoa", f"-o:{dest_dir}", archive_path]
         else:
             cmd = [tool, "x", "-y", f"-o{dest_dir}", archive_path]
 
         try:
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(
+                cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=ARCHIVE_EXTRACT_TIMEOUT_SECONDS,
+                creationflags=(subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 0),
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=400, detail="解压超时，请确认压缩包大小与内容")
         except subprocess.CalledProcessError:
             raise HTTPException(status_code=400, detail="解压失败，请确认压缩包格式正确")
         return
@@ -1028,6 +1091,69 @@ def _is_within_reports_dir(path: str):
     except Exception:
         return False
 
+async def _process_report_upload_job(job_id: str, suspect_id: int, archive_path: str, work_dir: str):
+    _set_report_job(job_id, {"status": "queued", "updated_at": datetime.now().isoformat(timespec="seconds")})
+    await REPORT_UPLOAD_SEMAPHORE.acquire()
+    try:
+        _set_report_job(job_id, {"status": "processing", "updated_at": datetime.now().isoformat(timespec="seconds")})
+        db = database.SessionLocal()
+        try:
+            suspect = db.query(models.Suspect).filter(models.Suspect.id == suspect_id).first()
+            if not suspect:
+                _set_report_job(job_id, {"status": "error", "detail": "Suspect not found", "updated_at": datetime.now().isoformat(timespec="seconds")})
+                return
+
+            await asyncio.to_thread(_extract_archive, archive_path, work_dir)
+            await asyncio.to_thread(_delete_tree, archive_path)
+
+            report_root = await asyncio.to_thread(_detect_report_root, work_dir)
+            main_rel = (await asyncio.to_thread(_find_main_html, report_root)).replace("\\", "/")
+
+            old_report_root = suspect.report_path
+            suspect.report_path = report_root
+            suspect.report_filename = main_rel
+            db.commit()
+
+            if old_report_root and old_report_root != report_root and _is_within_reports_dir(old_report_root):
+                await asyncio.to_thread(_remove_report_access, old_report_root)
+                old_delete_target = _get_report_container_dir(old_report_root)
+                await asyncio.to_thread(_delete_tree, old_delete_target)
+
+            await asyncio.to_thread(_update_report_access, report_root)
+
+            _set_report_job(
+                job_id,
+                {
+                    "status": "done",
+                    "filename": main_rel,
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                },
+            )
+        finally:
+            db.close()
+    except HTTPException as e:
+        _set_report_job(
+            job_id,
+            {
+                "status": "error",
+                "detail": getattr(e, "detail", "服务器处理失败"),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+        await asyncio.to_thread(_delete_tree, work_dir)
+    except Exception as e:
+        _set_report_job(
+            job_id,
+            {
+                "status": "error",
+                "detail": str(e),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+        await asyncio.to_thread(_delete_tree, work_dir)
+    finally:
+        REPORT_UPLOAD_SEMAPHORE.release()
+
 @app.post("/api/report/upload")
 async def upload_report(
     background_tasks: BackgroundTasks,
@@ -1046,40 +1172,37 @@ async def upload_report(
             raise HTTPException(status_code=400, detail="请上传取证报告压缩包（zip/rar），不支持直接上传 HTML")
         raise HTTPException(status_code=400, detail="仅支持上传 zip 或 rar 格式压缩包")
 
-    await REPORT_UPLOAD_SEMAPHORE.acquire()
-    try:
-        report_version = uuid.uuid4().hex
-        work_dir = os.path.join(REPORTS_DIR, str(suspect_id), report_version)
-        os.makedirs(work_dir, exist_ok=True)
+    report_version = uuid.uuid4().hex
+    work_dir = os.path.join(REPORTS_DIR, str(suspect_id), report_version)
+    os.makedirs(work_dir, exist_ok=True)
 
-        archive_path = os.path.join(work_dir, filename)
-        with open(archive_path, "wb") as out:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
+    archive_path = os.path.join(work_dir, filename)
+    async with aiofiles.open(archive_path, "wb") as out:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            await out.write(chunk)
 
-        _extract_archive(archive_path, work_dir)
-        _delete_tree(archive_path)
+    job_id = uuid.uuid4().hex
+    _set_report_job(
+        job_id,
+        {
+            "status": "queued",
+            "suspect_id": suspect_id,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        },
+    )
+    asyncio.create_task(_process_report_upload_job(job_id, suspect_id, archive_path, work_dir))
+    return {"status": "accepted", "job_id": job_id}
 
-        report_root = _detect_report_root(work_dir)
-        main_rel = _find_main_html(report_root).replace("\\", "/")
-
-        old_report_root = suspect.report_path
-        suspect.report_path = report_root
-        suspect.report_filename = main_rel
-        db.commit()
-
-        if old_report_root and old_report_root != report_root and _is_within_reports_dir(old_report_root):
-            await asyncio.to_thread(_remove_report_access, old_report_root)
-            old_delete_target = _get_report_container_dir(old_report_root)
-            background_tasks.add_task(_delete_tree, old_delete_target)
-
-        await asyncio.to_thread(_update_report_access, report_root)
-        return {"status": "ok", "filename": main_rel}
-    finally:
-        REPORT_UPLOAD_SEMAPHORE.release()
+@app.get("/api/report/upload_status")
+def report_upload_status(job_id: str = Query(...)):
+    job = _get_report_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
 
 @app.post("/api/set_report_path")
 def set_report_path(request: ReportPathRequest, db: Session = Depends(database.get_db)):

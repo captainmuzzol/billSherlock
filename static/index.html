@@ -87,6 +87,30 @@
             animation: breathe-blue 3s infinite ease-in-out;
         }
 
+        @keyframes linkage-wiggle {
+
+            0%,
+            100% {
+                transform: scale(1.12) rotate(0deg);
+            }
+
+            25% {
+                transform: scale(1.12) rotate(-2deg);
+            }
+
+            50% {
+                transform: scale(1.12) rotate(2deg);
+            }
+
+            75% {
+                transform: scale(1.12) rotate(-1deg);
+            }
+        }
+
+        .animate-linkage-wiggle {
+            animation: linkage-wiggle 0.55s ease-in-out infinite;
+        }
+
         /* Markdown Styles */
         .markdown-body ul {
             list-style-type: disc;
@@ -660,8 +684,8 @@
                                 交易明细查询
                             </h2>
                             <div class="flex gap-3">
-                                <button @click="openInvestigationModal"
-                                    class="text-sm text-indigo-500 border border-indigo-200 bg-indigo-50/50 rounded px-3 py-1 hover:text-indigo-600 hover:font-bold hover:border-indigo-600 hover:bg-indigo-100 flex items-center gap-1 transition-all animate-breathe-blue">
+                                <button ref="linkageButtonEl" @click="openLinkageGuide"
+                                    :class="['text-sm text-indigo-500 border border-indigo-200 bg-indigo-50/50 rounded px-3 py-1 hover:text-indigo-600 hover:font-bold hover:border-indigo-600 hover:bg-indigo-100 flex items-center gap-1 transition-all animate-breathe-blue', showLinkageSpotlight ? 'relative z-[90] ring-4 ring-indigo-300 ring-offset-4 ring-offset-black/0 animate-linkage-wiggle' : '']">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                             d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z">
@@ -1003,7 +1027,7 @@
                                     上传说明：
                                 </p>
                                 <p>1. 请直接上传取证报告压缩包： <span class="font-semibold">zip/rar</span> </p>
-                                <p>2. 不支持直接选择 HTML 文件或文件夹。</p>
+                                <p>2. 如已安装浏览器插件，可直接在浏览器打开本地报告入口 HTML（无需上传），点击时间自动同步。</p>
                             </div>
 
                             <div class="space-y-3">
@@ -1155,6 +1179,113 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                 </svg>
                 {{ feedbackToast.message }}
+            </div>
+        </transition>
+
+        <transition enter-active-class="transition duration-200 ease-out" enter-from-class="opacity-0"
+            enter-to-class="opacity-100" leave-active-class="transition duration-150 ease-in"
+            leave-from-class="opacity-100" leave-to-class="opacity-0">
+            <div v-if="showLinkageSpotlight" class="fixed inset-0 z-[80]">
+                <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" @click="closeLinkageSpotlight"></div>
+                <div v-if="linkageSpotlightRect"
+                    class="absolute rounded-xl border-2 border-indigo-300 shadow-[0_0_0_6px_rgba(99,102,241,0.25)] pointer-events-none"
+                    :style="{ top: linkageSpotlightRect.top + 'px', left: linkageSpotlightRect.left + 'px', width: linkageSpotlightRect.width + 'px', height: linkageSpotlightRect.height + 'px' }">
+                </div>
+                <div class="absolute z-[85] w-[320px] max-w-[calc(100vw-24px)] bg-white rounded-2xl shadow-2xl border border-indigo-100 p-4"
+                    :style="linkageTooltipStyle">
+                    <div class="flex items-start gap-3">
+                        <div
+                            class="bg-indigo-100 text-indigo-700 rounded-full w-9 h-9 flex items-center justify-center shrink-0">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <div class="font-bold text-gray-900 text-sm mb-1">点击这里查看取证联动指引</div>
+                            <div class="text-xs text-gray-600 leading-relaxed">
+                                先在浏览器右上角打开插件并“绑定当前页面”，再打开本地取证报告点击时间即可同步。
+                            </div>
+                        </div>
+                        <button class="text-gray-400 hover:text-gray-600" @click.stop="closeLinkageSpotlight">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="flex justify-end gap-2 mt-4">
+                        <button class="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                            @click="closeLinkageSpotlight">稍后</button>
+                        <button
+                            class="px-4 py-1.5 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm"
+                            @click="openLinkageGuideFromSpotlight">查看指引</button>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <transition enter-active-class="transition duration-200 ease-out" enter-from-class="opacity-0 scale-95"
+            enter-to-class="opacity-100 scale-100" leave-active-class="transition duration-150 ease-in"
+            leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+            <div v-if="showLinkageGuideModal"
+                class="fixed inset-0 z-[90] bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+                    <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                        <div class="font-bold text-gray-900 flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-indigo-600"></span>
+                            取证联动指引（本地报告）
+                        </div>
+                        <button @click="closeLinkageGuide" class="text-gray-400 hover:text-gray-600">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <div
+                            class="bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-sm text-indigo-900 leading-relaxed">
+                            请在账单神探的“交易明细”页面保持打开：点击时间可跳转到具体时间；点击头像可跳转一个时间段。
+                        </div>
+                        <div class="space-y-3 text-sm text-gray-700">
+                            <div class="flex gap-3">
+                                <div
+                                    class="w-6 h-6 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                                    1</div>
+                                <div>看浏览器右上角：点击“扩展/拼图”图标，找到“账单神探联动”，建议固定到工具栏。</div>
+                            </div>
+                            <div class="flex gap-3">
+                                <div
+                                    class="w-6 h-6 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                                    2</div>
+                                <div>回到账单神探页面，点击扩展图标，选择“绑定当前页面”。</div>
+                            </div>
+                            <div class="flex gap-3">
+                                <div
+                                    class="w-6 h-6 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                                    3</div>
+                                <div>在浏览器打开本地取证报告入口 <span class="font-mono">HTML</span>（地址以 <span
+                                        class="font-mono">file://</span> 开头）。</div>
+                            </div>
+                            <div class="flex gap-3">
+                                <div
+                                    class="w-6 h-6 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                                    4</div>
+                                <div>在取证报告里点击聊天记录时间或头像：账单神探会自动同步筛选。</div>
+                            </div>
+                        </div>
+                        <div
+                            class="bg-yellow-50 border border-yellow-100 rounded-xl p-4 text-xs text-yellow-900 leading-relaxed">
+                            如本地报告页没有任何提示，请在扩展详情中开启“允许访问文件网址”。
+                        </div>
+                    </div>
+                    <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end">
+                        <button
+                            class="px-5 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700"
+                            @click="closeLinkageGuide">我知道了</button>
+                    </div>
+                </div>
             </div>
         </transition>
     </div>
@@ -1323,6 +1454,17 @@
                             }
                         }
                     };
+
+                    window.addEventListener('message', (event) => {
+                        const data = event && event.data ? event.data : null;
+                        if (!data || data.type !== 'BILL_EXTRA_TIME_SYNC') return;
+                        console.log('Received extension time sync:', data);
+                        if (data.start_time) {
+                            syncTimeFromReport(data.start_time, data.end_time);
+                        } else if (data.time) {
+                            syncTimeFromReport(data.time);
+                        }
+                    });
                 });
 
                 // --- Suspect Methods ---
@@ -1809,6 +1951,75 @@
                 const reportUrl = ref('');
                 const isReportMinimized = ref(false);
 
+                const showLinkageGuideModal = ref(false);
+                const showLinkageSpotlight = ref(false);
+                const linkageButtonEl = ref(null);
+                const linkageSpotlightRect = ref(null);
+                const linkageTooltipStyle = ref({ top: '16px', left: '16px' });
+
+                const updateLinkageSpotlight = () => {
+                    const el = linkageButtonEl.value;
+                    if (!el) return;
+                    const rect = el.getBoundingClientRect();
+                    linkageSpotlightRect.value = {
+                        top: Math.max(8, Math.round(rect.top - 6)),
+                        left: Math.max(8, Math.round(rect.left - 6)),
+                        width: Math.round(rect.width + 12),
+                        height: Math.round(rect.height + 12)
+                    };
+
+                    const tooltipWidth = 320;
+                    const pad = 12;
+                    const top = Math.min(window.innerHeight - pad - 140, rect.top + rect.height + 14);
+                    const left = Math.min(window.innerWidth - pad - tooltipWidth, Math.max(pad, rect.left));
+                    linkageTooltipStyle.value = { top: `${Math.round(top)}px`, left: `${Math.round(left)}px` };
+                };
+
+                const closeLinkageSpotlight = () => {
+                    showLinkageSpotlight.value = false;
+                };
+
+                const openLinkageGuide = () => {
+                    showLinkageSpotlight.value = false;
+                    showLinkageGuideModal.value = true;
+                    nextTick(() => {
+                        updateLinkageSpotlight();
+                    });
+                };
+
+                const openLinkageGuideFromSpotlight = () => {
+                    closeLinkageSpotlight();
+                    openLinkageGuide();
+                };
+
+                const closeLinkageGuide = () => {
+                    showLinkageGuideModal.value = false;
+                };
+
+                const startLinkageSpotlight = () => {
+                    showLinkageGuideModal.value = false;
+                    showLinkageSpotlight.value = true;
+                    nextTick(() => {
+                        updateLinkageSpotlight();
+                    });
+                };
+
+                const onSpotlightViewportChange = () => {
+                    if (!showLinkageSpotlight.value) return;
+                    updateLinkageSpotlight();
+                };
+
+                watch(showLinkageSpotlight, (val) => {
+                    if (val) {
+                        nextTick(() => updateLinkageSpotlight());
+                        window.addEventListener('resize', onSpotlightViewportChange);
+                        window.addEventListener('scroll', onSpotlightViewportChange, true);
+                    } else {
+                        window.removeEventListener('resize', onSpotlightViewportChange);
+                        window.removeEventListener('scroll', onSpotlightViewportChange, true);
+                    }
+                });
+
                 const reportArchiveFile = ref(null);
                 const reportArchiveInputKey = ref(0);
                 const reportUploading = ref(false);
@@ -1937,15 +2148,7 @@
                 };
 
                 const openInvestigationModal = () => {
-                    if (activeSuspect.value && activeSuspect.value.report_path) {
-                        // Already linked, open directly
-                        const filename = activeSuspect.value.report_filename || 'index.html';
-                        reportUrl.value = `/report_proxy/${activeSuspect.value.id}/${filename}`;
-                        showReportOverlay.value = true;
-                        isReportMinimized.value = false;
-                    } else {
-                        showInvestigationModal.value = true;
-                    }
+                    openLinkageGuide();
                 };
 
                 const startInvestigation = async () => {
@@ -1964,8 +2167,44 @@
 
                         const data = await uploadReportArchive(activeSuspect.value.id, reportArchiveFile.value);
 
-                        reportUploadStatus.value = '服务器处理中...';
-                        reportUploadProgress.value = 100;
+                        const waitForJobDone = async (jobId) => {
+                            const startedAt = Date.now();
+                            while (true) {
+                                const res = await fetch(`/api/report/upload_status?job_id=${encodeURIComponent(jobId)}`);
+                                if (!res.ok) {
+                                    throw new Error(`上传失败（${res.status}）`);
+                                }
+                                const payload = await res.json();
+                                const status = payload && payload.status ? String(payload.status) : '';
+                                if (status === 'queued') {
+                                    reportUploadStatus.value = '排队中（等待服务器处理）...';
+                                    reportUploadProgress.value = Math.max(reportUploadProgress.value, 99);
+                                } else if (status === 'processing') {
+                                    reportUploadStatus.value = '服务器处理中...';
+                                    reportUploadProgress.value = Math.max(reportUploadProgress.value, 99);
+                                } else if (status === 'done') {
+                                    return payload;
+                                } else if (status === 'error') {
+                                    const detail = (payload && payload.detail) ? String(payload.detail) : '服务器处理失败';
+                                    throw new Error(detail);
+                                }
+
+                                if (Date.now() - startedAt > 15 * 60 * 1000) {
+                                    throw new Error('服务器处理超时，请稍后重试');
+                                }
+                                await new Promise(r => setTimeout(r, 1000));
+                            }
+                        };
+
+                        let finalData = data;
+                        if (data && data.status === 'accepted' && data.job_id) {
+                            reportUploadStatus.value = '服务器处理中...';
+                            reportUploadProgress.value = Math.max(reportUploadProgress.value, 99);
+                            finalData = await waitForJobDone(data.job_id);
+                        } else {
+                            reportUploadStatus.value = '服务器处理中...';
+                            reportUploadProgress.value = 100;
+                        }
 
                         await loadSuspects();
                         const updated = suspects.value.find(s => s.id === activeSuspect.value.id);
@@ -1973,7 +2212,8 @@
                             activeSuspect.value = updated;
                         }
 
-                        const filename = (data && data.filename) ? data.filename : (activeSuspect.value && activeSuspect.value.report_filename) || 'index.html';
+                        reportUploadProgress.value = 100;
+                        const filename = (finalData && finalData.filename) ? finalData.filename : (activeSuspect.value && activeSuspect.value.report_filename) || 'index.html';
                         reportUrl.value = `/report_proxy/${activeSuspect.value.id}/${filename}`;
                         showReportOverlay.value = true;
                         isReportMinimized.value = false;
@@ -1996,7 +2236,7 @@
                     // Switch to transactions tab first to show the button context
                     currentTab.value = 'transactions';
                     nextTick(() => {
-                        openInvestigationModal();
+                        startLinkageSpotlight();
                     });
                 };
 
@@ -2112,6 +2352,14 @@
                     showLinkagePromo,
                     enableLinkageFromPromo,
                     dismissLinkagePromo,
+                    showLinkageGuideModal,
+                    showLinkageSpotlight,
+                    linkageSpotlightRect,
+                    linkageTooltipStyle,
+                    openLinkageGuide,
+                    openLinkageGuideFromSpotlight,
+                    closeLinkageGuide,
+                    closeLinkageSpotlight,
                     reportArchiveFile,
                     reportArchiveInputKey,
                     reportUploading,
