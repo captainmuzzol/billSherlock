@@ -1,0 +1,13 @@
+{
+  "status": "done",
+  "updated_at": "2025-12-19T08:19:19",
+  "current_filename": "dummy.pdf",
+  "current_file_index": 1,
+  "total_files": 1,
+  "results": [
+    {
+      "filename": "dummy.pdf",
+      "error": "No /Root object! - Is this really a PDF?"
+    }
+  ]
+}

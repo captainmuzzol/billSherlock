@@ -191,17 +191,6 @@ async def _process_bill_upload_job(job_id: str, suspect_id: int, stored_files: l
                         except Exception:
                             continue
                     inserted = _insert_transactions_for_suspect(db, suspect_id, filename, data or [])
-                    diag_file = None
-                    try:
-                        lower = filename.lower()
-                        if lower.endswith(".pdf") and len(data or []) <= 50:
-                            diag = await asyncio.to_thread(parser.inspect_pdf_sample, fpath)
-                            diag_name = f"bill_upload_diag_{suspect_id}_{job_id}.json"
-                            diag_path = os.path.abspath(os.path.join(os.getcwd(), diag_name))
-                            await asyncio.to_thread(_write_json_atomic, diag_path, diag)
-                            diag_file = diag_name
-                    except Exception:
-                        diag_file = None
                     results.append(
                         {
                             "filename": filename,
@@ -210,7 +199,7 @@ async def _process_bill_upload_job(job_id: str, suspect_id: int, stored_files: l
                             "min_time": min_time.isoformat(timespec="seconds") if min_time else None,
                             "max_time": max_time.isoformat(timespec="seconds") if max_time else None,
                             "distinct_days": len(distinct_days),
-                            "diagnostics_file": diag_file,
+                            "diagnostics_file": None,
                         }
                     )
                 except Exception as e:
